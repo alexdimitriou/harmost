@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { CONFIG_FILE, DEFAULT_ADR_DIR, INVOCATION, PRODUCT_NAME } from "./name.js";
@@ -55,6 +56,51 @@ function registerClaudeHook(path: string, tools: readonly string[]): ScaffoldRes
   return { path, outcome: "created" };
 }
 
+/**
+ * Ask git which of these paths it ignores.
+ *
+ * `init --claude` happily reported "created .claude/settings.json" in a repo
+ * whose .gitignore contains `.claude`. The file was written, the message was
+ * true, and the hook was never going to reach a second developer: deterministic
+ * delivery had quietly become per-developer opt-in, which is class 4 wearing
+ * class 1's clothes. The tool has to say so — the whole product is the claim
+ * that a mechanism holds without anyone remembering.
+ *
+ * Silent on anything unexpected (no git, not a repo, git not on PATH): a false
+ * alarm here would train people to ignore the one warning that matters.
+ */
+function ignoredPaths(root: string, paths: readonly string[]): Map<string, string> {
+  const found = new Map<string, string>();
+  if (paths.length === 0) return found;
+  let result;
+  try {
+    // No --no-index: a path that was force-added is tracked, so it does reach
+    // other clones and must not be warned about. Letting git consult the index
+    // is what makes the warning mean "this will not travel".
+    result = spawnSync("git", ["check-ignore", "-v", "--stdin"], {
+      cwd: root,
+      input: paths.join("\n"),
+      encoding: "utf8",
+    });
+  } catch {
+    return found;
+  }
+  // 0 = some ignored, 1 = none ignored, anything else = not a repo / no git.
+  if (result.error || (result.status !== 0 && result.status !== 1)) return found;
+  for (const line of (result.stdout ?? "").split("\n")) {
+    // "<source>:<line>:<pattern>\t<path>"
+    const tab = line.lastIndexOf("\t");
+    if (tab === -1) continue;
+    const rule = line.slice(0, tab);
+    const path = line.slice(tab + 1);
+    // "<source>:<linenum>:<pattern>" — keep source and line, drop the pattern.
+    // Non-greedy so a pattern containing a colon cannot eat the line number.
+    const located = /^(.*?:\d+):/.exec(rule);
+    found.set(path, located ? located[1]! : rule);
+  }
+  return found;
+}
+
 export function init(options: InitOptions = {}): ScaffoldResult[] {
   const root = options.cwd ?? process.cwd();
   const at = (p: string) => join(root, p);
@@ -90,6 +136,13 @@ export function init(options: InitOptions = {}): ScaffoldResult[] {
   ];
   if (options.claude) results.push(registerClaudeHook(at(CLAUDE_SETTINGS), tools));
   if (options.ci) results.push(writeIfAbsent(at(WORKFLOW_PATH), GITHUB_WORKFLOW));
+
+  const landed = results.filter((r) => r.outcome !== "refused");
+  const ignored = ignoredPaths(root, landed.map((r) => r.path));
+  for (const result of landed) {
+    const rule = ignored.get(result.path);
+    if (rule !== undefined) result.ignoredBy = rule;
+  }
   return results;
 }
 
@@ -108,6 +161,19 @@ export function report(results: ScaffoldResult[], root: string): string {
       "",
       `${refused.length} item${refused.length === 1 ? "" : "s"} could not be written. Nothing was overwritten.`,
       "Resolve the above and re-run — init is safe to repeat.",
+    );
+  }
+
+  const ignored = results.filter((r) => r.ignoredBy !== undefined);
+  if (ignored.length > 0) {
+    lines.push(
+      "",
+      `WARNING — git ignores ${ignored.length === 1 ? "one of these files" : `${ignored.length} of these files`}, so ${ignored.length === 1 ? "it stays" : "they stay"} on this machine only:`,
+      ...ignored.map((r) => `  ${rel(r.path)}  (ignored by ${r.ignoredBy})`),
+      "",
+      "None of this is enforcement until it reaches every clone. Un-ignore the",
+      "path (a trailing `!` rule) or the mechanism is opt-in per developer —",
+      "which is class 4, whatever the file says.",
     );
   }
 

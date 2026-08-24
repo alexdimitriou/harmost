@@ -7,7 +7,7 @@ import {
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { init } from "./init.js";
+import { init, report } from "./init.js";
 import { newAdr } from "./new.js";
 import { check } from "./check.js";
 import { hookResponse } from "./hook.js";
@@ -349,4 +349,30 @@ test("R24 — no wall clock in the delivery path", () => {
     /Date\.now\(\)|performance\.now\(\)|new Date\(/,
     "delivery must be a pure function of (edited text, ledger)",
   );
+});
+
+test("R25 — init says so when git will not carry what it just wrote", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "harmost-gitignore-"));
+  const git = (...args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
+  git("init", "-q");
+  git("config", "user.email", "t@example.com");
+  git("config", "user.name", "t");
+  writeFileSync(join(cwd, ".gitignore"), "node_modules\n.claude\n", "utf8");
+
+  const results = init({ cwd, claude: true });
+  const settings = results.find((r) => r.path.endsWith(join(".claude", "settings.json")))!;
+  // The file is written and the message used to say "created" — true, and
+  // useless: the hook was never going to reach a second developer.
+  assert.equal(settings.outcome, "created");
+  assert.match(settings.ignoredBy ?? "", /^\.gitignore:2$/);
+  assert.match(report(results, cwd), /WARNING — git ignores/);
+  // The ledger itself is not ignored, so it must not be swept into the warning.
+  assert.equal(results.find((r) => r.path.endsWith("harmost.yaml"))!.ignoredBy, undefined);
+
+  // Force-added: it is tracked, so it does travel, and warning would be a lie
+  // that teaches people to ignore the one warning that matters.
+  git("add", "-f", ".claude/settings.json");
+  const after = init({ cwd, claude: true });
+  assert.equal(after.find((r) => r.path.endsWith(join(".claude", "settings.json")))!.ignoredBy, undefined);
+  assert.doesNotMatch(report(after, cwd), /WARNING — git ignores/);
 });

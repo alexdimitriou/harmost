@@ -8,6 +8,9 @@ export interface ScaffoldResult {
   outcome: Outcome;
   /** Why we declined to touch it. Present only for "refused". */
   reason?: string;
+  /** git ignores this path, so it will never reach another clone.
+   *  `source` is the ignoring rule, e.g. ".gitignore:38". */
+  ignoredBy?: string;
 }
 
 /**
