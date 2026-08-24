@@ -124,6 +124,23 @@ A stable contract, versioned by `version`. Additive changes only within a major.
 `fail`; that is exactly when the command exits 1. `enforced` counts artifacts
 that **resolved**, never artifacts that were merely declared.
 
+## Threat model
+
+The ledger is trusted input. `check` validates frontmatter and humans ratify;
+neither the gate nor the hook is a boundary against hostile ADR *prose*.
+
+The hook delivers a matched ADR's **full markdown, verbatim** — that is the
+point, and it means an ADR body can contain arbitrary text, including text
+shaped like another ADR's header. The hook's own framing stays accurate: it
+labels each block with the status read from validated frontmatter, states
+plainly how many rules are ratified versus proposed, and `check` reports the
+real counts. But a body can still assert things about itself in prose, and no
+amount of fencing would prevent that. Review ADRs the way you review CI config.
+
+Enforcement artifacts are resolved inside the repository — a path that escapes
+via `..` or a symlink is refused, so a verdict never depends on a file that is
+absent from a clean clone.
+
 ## Design
 
 - **Git is canonical.** The ledger is text in a repo: diffed, blamed, reviewed, rebuildable. Any index or dashboard is derived, never the source.
