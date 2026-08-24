@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { PRODUCT_NAME, INVOCATION } from "./name.js";
 import { init, report } from "./init.js";
+import { newAdr, reportNew } from "./new.js";
 
 const pkg = JSON.parse(
   readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8"),
@@ -58,9 +59,17 @@ program
   .command("new")
   .argument("<title>", "one-sentence statement of the invariant")
   .description("create the next ADR from the template")
-  .option("--class <n>", "enforcement class 1-4")
+  .option("--class <n>", "enforcement class 1-4 (default 4 — unconsidered is unenforced)")
   .option("--symbols <list>", "comma-separated content-match terms")
-  .action(() => NOT_YET("new"));
+  .action((title: string, options: { class?: string; symbols?: string }) => {
+    const cwd = process.cwd();
+    try {
+      process.stdout.write(reportNew(newAdr(title, { ...options, cwd }), cwd) + "\n");
+    } catch (error) {
+      process.stderr.write(`${PRODUCT_NAME}: ${(error as Error).message}\n`);
+      process.exit(2);
+    }
+  });
 
 program
   .command("check")
