@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { PRODUCT_NAME, INVOCATION } from "./name.js";
+import { init, report } from "./init.js";
 
 const pkg = JSON.parse(
   readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8"),
@@ -43,7 +44,15 @@ program
   .description("scaffold the ADR ledger, config, agent hook and CI gate")
   .option("--claude", "register the PreToolUse hook in .claude/settings.json")
   .option("--ci <system>", "write a CI workflow (github)")
-  .action(() => NOT_YET("init"));
+  .action((options: { claude?: boolean; ci?: string }) => {
+    const cwd = process.cwd();
+    try {
+      process.stdout.write(report(init({ ...options, cwd }), cwd) + "\n");
+    } catch (error) {
+      process.stderr.write(`${PRODUCT_NAME}: ${(error as Error).message}\n`);
+      process.exit(2);
+    }
+  });
 
 program
   .command("new")
