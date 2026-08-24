@@ -1,4 +1,7 @@
 import { readConfig } from "./config-read.js";
+import { endpointNeedles } from "./adr.js";
+
+export { endpointNeedles };
 import { loadLedger, type AdrRecord } from "./ledger.js";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -44,48 +47,54 @@ export function editedText(toolInput: unknown): string {
   return parts.join("\n");
 }
 
+/**
+ * Whole-word, unicode-aware. `\w` is ASCII-only, so an accented identifier
+ * such as `écafé` reads as a word boundary before `café` and produces a false
+ * match. \p{L}\p{N} covers letters and digits in any script.
+ */
+const BOUNDARY = "[\\p{L}\\p{N}_$]";
 const wholeWord = (term: string): RegExp =>
-  new RegExp(`(?<![\\w$])${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w$])`);
+  new RegExp(`(?<!${BOUNDARY})${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!${BOUNDARY})`, "u");
 
-/** Mount-point noise. Stripped from the ledger's route so a rule reaches a
- *  client whichever side carries the prefix — the swagger-generated list is
- *  full backend paths, while clients often write the bare resource. */
-const MOUNT_SEGMENT = /^(api|rest|public|internal|v\d+)$/i;
-
-/** Endpoints are matched on their resource segments: prefixes differ between
- *  clients (`/Assets/findOne` vs `/api/v1/Assets/findOne`) but the resource
- *  does not. Path parameters are skipped — `{id}` names nothing in the code. */
-export const endpointNeedles = (endpoint: string): string[] => {
-  const segments = endpoint
-    .split("/")
-    .filter((segment) => segment.length > 0 && !segment.startsWith("{") && !segment.startsWith(":"));
-  let start = 0;
-  while (start < segments.length && MOUNT_SEGMENT.test(segments[start]!)) start += 1;
-  // Keep at least the last segment: a route that is nothing but mount points
-  // has no resource to match on, and must not become a wildcard.
-  return start >= segments.length ? [] : segments.slice(start);
-};
 
 export interface Match {
   record: AdrRecord;
   hits: number;
 }
 
-export function matchAdrs(text: string, records: AdrRecord[], cap: number): Match[] {
+/**
+ * Matching cost is |text| x |symbols|, and both are attacker-shaped: a
+ * multi-megabyte Write against a few hundred ADRs took seconds, which the host
+ * then killed at its timeout. Bounding the scanned text keeps the hook inside
+ * its budget; a symbol that appears only past this offset is missed, which is
+ * the cheap direction to be wrong in — the merge gate still holds.
+ */
+const MAX_SCANNED_CHARS = 256 * 1024;
+
+export function matchAdrs(
+  text: string,
+  records: AdrRecord[],
+  cap: number,
+  deadline = Number.POSITIVE_INFINITY,
+): Match[] {
   if (text.length === 0) return [];
+  const scanned = text.length > MAX_SCANNED_CHARS ? text.slice(0, MAX_SCANNED_CHARS) : text;
   const matches: Match[] = [];
 
   for (const record of records) {
+    // Checked per record so a pathological ledger degrades to fewer matches
+    // rather than to a hook the host has to kill.
+    if (Date.now() > deadline) break;
     if (record.status === "superseded" || record.status === "rejected") continue;
     let hits = 0;
     for (const symbol of record.symbols) {
-      if (symbol.length > 0 && wholeWord(symbol).test(text)) hits += 1;
+      if (symbol.length > 0 && wholeWord(symbol).test(scanned)) hits += 1;
     }
     for (const endpoint of record.endpoints) {
       const needles = endpointNeedles(endpoint);
       // `[].every()` is vacuously true: without this guard a degenerate route
       // such as "/" or "/api/v1" would match every edit ever made.
-      if (needles.length > 0 && needles.every((n) => wholeWord(n).test(text))) hits += 1;
+      if (needles.length > 0 && needles.every((n) => wholeWord(n).test(scanned))) hits += 1;
     }
     if (hits > 0) matches.push({ record, hits });
   }
@@ -154,12 +163,12 @@ export function hookResponse(event: HookEvent, cwd: string): string | null {
   // is safe only because `check` fails the build on the same file — the gate is
   // what makes the hook's silence recoverable.
   const { records } = loadLedger(join(cwd, config.adrDir));
-  // Checked here, where bailing still saves the matching and rendering work.
-  // Best-effort only: by definition it cannot bound work already done, so the
-  // real bound is the host `timeout` on the registration (see claude-settings).
-  if (Date.now() - started > MATCH_BUDGET_MS) return null;
 
-  const matches = matchAdrs(text, records, config.hook.maxInjectedAdrs);
+  // The budget bounds the work; it does not veto the result. Returning null
+  // here because loading was slow meant a large ledger silently delivered
+  // NOTHING — the mechanism switching itself off precisely where the ledger is
+  // biggest and delivery matters most.
+  const matches = matchAdrs(text, records, config.hook.maxInjectedAdrs, started + MATCH_BUDGET_MS);
   if (matches.length === 0) return null;
 
   return JSON.stringify({

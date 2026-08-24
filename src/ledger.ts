@@ -107,13 +107,30 @@ export function parseAdr(file: string, path: string, source: string): AdrRecord 
   };
 }
 
+/** The configured ledger directory is absent. Distinct from an empty ledger:
+ *  an empty ledger is a healthy starting state, a missing one is a broken
+ *  config, and reporting them identically lets one typo in `adr_dir` turn the
+ *  merge gate permanently green over every accepted ADR in the repo. */
+export class MissingLedgerError extends Error {
+  constructor(adrDirPath: string) {
+    super(`adr_dir "${adrDirPath}" does not exist — the ledger is missing, not empty`);
+    this.name = "MissingLedgerError";
+  }
+}
+
+/** Case-insensitive: a ledger written on a case-insensitive filesystem can
+ *  hold ADR-001-x.MD, and silently skipping it takes the gate green over an
+ *  ADR nobody can see. */
+const isMarkdown = (file: string): boolean => file.toLowerCase().endsWith(".md");
+const isTemplate = (file: string): boolean => file.toLowerCase() === "template.md";
+
 export function loadLedger(adrDirPath: string): Ledger {
-  if (!existsSync(adrDirPath)) return { records: [], errors: [] };
+  if (!existsSync(adrDirPath)) throw new MissingLedgerError(adrDirPath);
   const records: AdrRecord[] = [];
   const errors: LoadError[] = [];
 
   for (const file of readdirSync(adrDirPath).sort()) {
-    if (!file.endsWith(".md") || file === "TEMPLATE.md") continue;
+    if (!isMarkdown(file) || isTemplate(file)) continue;
     if (!ADR_FILE.test(file)) {
       errors.push({ file, message: "filename must be ADR-<NNN>-<kebab-slug>.md" });
       continue;

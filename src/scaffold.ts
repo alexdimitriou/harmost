@@ -1,11 +1,13 @@
 import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 
-export type Outcome = "created" | "skipped";
+export type Outcome = "created" | "skipped" | "refused";
 
 export interface ScaffoldResult {
   path: string;
   outcome: Outcome;
+  /** Why we declined to touch it. Present only for "refused". */
+  reason?: string;
 }
 
 /**
@@ -17,7 +19,15 @@ export interface ScaffoldResult {
  */
 export function writeIfAbsent(path: string, content: string): ScaffoldResult {
   if (existsSync(path)) return { path, outcome: "skipped" };
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, content, "utf8");
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, content, "utf8");
+  } catch (error) {
+    // A path component exists as a plain file (EEXIST/ENOTDIR), the volume is
+    // read-only, permissions deny it. Previously this threw out of init, which
+    // aborted the whole scaffold after partial writes that were never reported.
+    // Report it as one refused item and let the rest proceed.
+    return { path, outcome: "refused", reason: (error as Error).message };
+  }
   return { path, outcome: "created" };
 }

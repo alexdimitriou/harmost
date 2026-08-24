@@ -1,8 +1,8 @@
-import { readFileSync, existsSync, statSync } from "node:fs";
-import { matchesGlob } from "node:path";
+import { readFileSync, existsSync, statSync, realpathSync } from "node:fs";
+import { matchesGlob, relative, isAbsolute } from "node:path";
 import { join } from "node:path";
 import { readConfig } from "./config-read.js";
-import { ADR_FILE } from "./adr.js";
+import { ADR_FILE, endpointNeedles } from "./adr.js";
 import { loadLedger, STATUSES, THIS_REPO, type AdrRecord, type Artifact } from "./ledger.js";
 
 export type Verdict = "pass" | "fail" | "unverified";
@@ -56,6 +56,21 @@ function resolveArtifact(
 
   if (!statSync(path).isFile()) return `${artifact.file} is not a file`;
 
+  // Containment is a determinism requirement, not a security one: `check` is
+  // contracted deterministic and offline, and a verdict that depends on a file
+  // outside the repo (via `..` or a symlink) is not reproducible on another
+  // machine. realpath resolves symlinks, which a lexical check cannot.
+  let real: string;
+  try {
+    real = realpathSync(path);
+  } catch {
+    return `${artifact.file} could not be resolved`;
+  }
+  const outside = relative(realpathSync(root), real);
+  if (outside.startsWith("..") || isAbsolute(outside)) {
+    return `${artifact.file} resolves outside the repository — enforcement must be reproducible from a clean clone`;
+  }
+
   if (artifact.type === "lint") {
     // Existence only for the tracer. Verifying a lint actually runs belongs to
     // the host repo's own CI; this gate verifies the declared artifact is there.
@@ -68,7 +83,12 @@ function resolveArtifact(
   // test_globs is where tests are allowed to live. Without this the config key
   // is decorative and a test artifact can point at production source, so the
   // gate would be satisfied by the very code it is supposed to be checking.
-  if (testGlobs.length > 0 && !testGlobs.some((glob) => matchesGlob(artifact.file, glob))) {
+  if (testGlobs.length === 0) {
+    // An empty allowlist permits nothing. Reading it as "no constraint" would
+    // let one config edit reopen the hole the allowlist exists to close.
+    return `test_globs is empty — no location is permitted for a test artifact, so ${artifact.file} cannot satisfy this ADR`;
+  }
+  if (!testGlobs.some((glob) => matchesGlob(artifact.file, glob))) {
     return `${artifact.file} is outside test_globs (${testGlobs.join(", ")}) — a test must live where tests live`;
   }
   if (!cache.has(path)) {
@@ -103,8 +123,14 @@ function validate(record: AdrRecord, ledger: AdrRecord[], root: string, thisRepo
   if (![1, 2, 3, 4].includes(record.enforcementClass)) {
     failures.push(`enforcement-class must be 1-4 — got "${String(record.enforcementClass)}"`);
   }
-  const realSymbols = record.symbols.filter((sym) => !isPlaceholder(sym));
-  const realEndpoints = record.endpoints.filter((e) => !isPlaceholder(e));
+  // "Deliverable" must mean what the hook can actually match on, not merely
+  // "non-empty". An empty string, a placeholder, or a route that is nothing but
+  // mount segments ("/api/v1") all pass a length check while the hook can never
+  // surface them — an ADR nobody is ever shown, behind a green gate.
+  const realSymbols = record.symbols.filter((sym) => sym.trim().length > 0 && !isPlaceholder(sym));
+  const realEndpoints = record.endpoints.filter(
+    (e) => !isPlaceholder(e) && endpointNeedles(e).length > 0,
+  );
   if (realSymbols.length === 0 && realEndpoints.length === 0) {
     // Without either, the hook can never deliver this ADR to anyone.
     failures.push("no `symbols` or `endpoints` — the hook could never surface this rule");
@@ -140,7 +166,13 @@ function validate(record: AdrRecord, ledger: AdrRecord[], root: string, thisRepo
     } else if ([1, 2, 3].includes(record.enforcementClass)) {
       // Rule 3 — the coverage gate. Accepted means something holds it.
       const repos = Object.keys(record.enforcedBy);
-      const local = record.enforcedBy[thisRepo] ?? record.enforcedBy[THIS_REPO] ?? [];
+      // Both buckets are "here": a ledger may name this repo explicitly AND
+      // carry a "." bucket. Taking only the first silently drops the other's
+      // artifacts — neither verified nor reported as unverified.
+      const local = [
+        ...(record.enforcedBy[thisRepo] ?? []),
+        ...(thisRepo === THIS_REPO ? [] : (record.enforcedBy[THIS_REPO] ?? [])),
+      ];
       const hasAny = repos.some((r) => (record.enforcedBy[r] ?? []).length > 0);
 
       if (!hasAny) {

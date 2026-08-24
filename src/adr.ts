@@ -10,7 +10,17 @@ export function nextId(adrDirPath: string): number {
     .map((f) => ADR_FILE.exec(f))
     .filter((m): m is RegExpExecArray => m !== null)
     .map((m) => Number.parseInt(m[1]!, 10));
-  return used.length === 0 ? 1 : Math.max(...used) + 1;
+  if (used.length === 0) return 1;
+  const highest = Math.max(...used);
+  if (!Number.isSafeInteger(highest) || highest + 1 > Number.MAX_SAFE_INTEGER) {
+    // Beyond double precision, String(n) yields "1e+21" and the filename stops
+    // matching the tool's own ADR pattern — `new` would write a file `check`
+    // then rejects as unreadable.
+    throw new Error(
+      `the highest ADR id in the ledger (${String(highest)}) is too large to allocate from`,
+    );
+  }
+  return highest + 1;
 }
 
 export const formatId = (n: number): string => `ADR-${String(n).padStart(3, "0")}`;
@@ -90,3 +100,26 @@ export function bodyOfTemplate(template: string): string {
   const match = /^---\n[\s\S]*?\n---\n?/.exec(template);
   return match ? template.slice(match[0].length) : template;
 }
+
+/** Mount-point noise. Stripped from the ledger's route so a rule reaches a
+ *  client whichever side carries the prefix — the swagger-generated list is
+ *  full backend paths, while clients often write the bare resource. */
+const MOUNT_SEGMENT = /^(api|rest|public|internal|v\d+)$/i;
+
+/** Endpoints are matched on their resource segments: prefixes differ between
+ *  clients (`/Assets/findOne` vs `/api/v1/Assets/findOne`) but the resource
+ *  does not. Path parameters are skipped — `{id}` names nothing in the code. */
+export const endpointNeedles = (endpoint: string): string[] => {
+  // A declared route may carry a query string or fragment; the resource is what
+  // the client's code contains, so "/Assets?filter=x" must still reach an edit
+  // touching "/Assets" rather than requiring the literal query in the source.
+  const segments = endpoint
+    .split(/[?#]/)[0]!
+    .split("/")
+    .filter((segment) => segment.length > 0 && !segment.startsWith("{") && !segment.startsWith(":"));
+  let start = 0;
+  while (start < segments.length && MOUNT_SEGMENT.test(segments[start]!)) start += 1;
+  // Keep at least the last segment: a route that is nothing but mount points
+  // has no resource to match on, and must not become a wildcard.
+  return start >= segments.length ? [] : segments.slice(start);
+};

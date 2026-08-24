@@ -26,6 +26,8 @@ export interface NewResult {
   id: string;
   path: string;
   enforcementClass: 1 | 2 | 3 | 4;
+  /** Whether the hook could ever match this ADR — i.e. whether `check` passes. */
+  deliverable: boolean;
 }
 
 function template(root: string, adrDir: string): string {
@@ -65,12 +67,24 @@ export function newAdr(title: string, options: NewOptions = {}): NewResult {
   if (written.outcome === "skipped") {
     throw new Error(`${path} already exists — refusing to overwrite an existing decision`);
   }
-  return { id, path, enforcementClass };
+  return { id, path, enforcementClass, deliverable: seed.symbols.length > 0 || (seed.endpoints ?? []).length > 0 };
 }
 
 export function reportNew(result: NewResult, root: string): string {
   const rel = result.path.startsWith(root) ? result.path.slice(root.length + 1) : result.path;
-  const lines = [`  created  ${rel}`, "", `${result.id} is \`proposed\`. The gate ignores it until it is accepted.`];
+  const lines = [`  created  ${rel}`, ""];
+
+  if (result.deliverable) {
+    lines.push(`${result.id} is \`proposed\`. The gate ignores it until it is accepted.`);
+  } else {
+    // Saying "the gate ignores it" while `check` fails on the very next command
+    // is the tool contradicting itself in two consecutive lines.
+    lines.push(
+      `${result.id} is \`proposed\` and \`check\` will FAIL until it has symbols or endpoints —`,
+      "without them the hook could never surface this rule to anyone.",
+      `Add them to the file, or re-run with --symbols / --endpoints.`,
+    );
+  }
 
   if (result.enforcementClass === 4) {
     lines.push(

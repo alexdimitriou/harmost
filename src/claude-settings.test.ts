@@ -1,31 +1,45 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mergeHookRegistration, HOOK_COMMAND, HOOK_MATCHER, HOOK_TIMEOUT_SECONDS } from "./claude-settings.js";
+import {
+  mergeHookRegistration,
+  matcherFor,
+  HOOK_COMMAND,
+  HOOK_MATCHER,
+  HOOK_TIMEOUT_SECONDS,
+  type ClaudeSettings,
+} from "./claude-settings.js";
 
-const commandsIn = (s: ReturnType<typeof mergeHookRegistration>["settings"]) =>
-  (s.hooks?.PreToolUse ?? []).flatMap((g) => (g.hooks ?? []).map((h) => h.command));
+const merged = (input: ClaudeSettings): ClaudeSettings => {
+  const outcome = mergeHookRegistration(input);
+  assert.equal(outcome.status, "merged", `expected merge, got ${outcome.status}`);
+  return (outcome as { status: "merged"; settings: ClaudeSettings }).settings;
+};
+const commandsIn = (s: ClaudeSettings): string[] =>
+  ((s.hooks?.PreToolUse ?? []) as { hooks?: { command: string }[] }[]).flatMap((g) =>
+    (g.hooks ?? []).map((h) => h.command),
+  );
 
 test("registers into an empty settings file", () => {
-  const { settings, changed } = mergeHookRegistration({});
-  assert.equal(changed, true);
-  assert.deepEqual(settings.hooks?.PreToolUse, [
+  assert.deepEqual(merged({}).hooks?.PreToolUse, [
     { matcher: HOOK_MATCHER, hooks: [{ type: "command", command: HOOK_COMMAND, timeout: HOOK_TIMEOUT_SECONDS }] },
   ]);
 });
 
+test("registers a host timeout — the only real bound on stalling an edit", () => {
+  const entry = ((merged({}).hooks?.PreToolUse ?? []) as { hooks: { timeout: number }[] }[])[0]!.hooks[0]!;
+  assert.equal(entry.timeout, HOOK_TIMEOUT_SECONDS);
+  assert.ok(HOOK_TIMEOUT_SECONDS < 600, "must be far below Claude Code's 600s default");
+});
+
 test("is idempotent — running init twice registers the hook once", () => {
-  const first = mergeHookRegistration({});
-  const second = mergeHookRegistration(first.settings);
-  assert.equal(second.changed, false);
-  assert.equal(commandsIn(second.settings).filter((c) => c === HOOK_COMMAND).length, 1);
-  assert.deepEqual(second.settings, first.settings);
+  const first = merged({});
+  const second = mergeHookRegistration(first);
+  assert.equal(second.status, "unchanged");
+  assert.equal(commandsIn(first).filter((c) => c === HOOK_COMMAND).length, 1);
 });
 
 test("never clobbers unrelated keys", () => {
-  const { settings } = mergeHookRegistration({
-    permissions: { allow: ["Bash(npm test)"] },
-    env: { FOO: "bar" },
-  });
+  const settings = merged({ permissions: { allow: ["Bash(npm test)"] }, env: { FOO: "bar" } });
   assert.deepEqual(settings.permissions, { allow: ["Bash(npm test)"] });
   assert.deepEqual(settings.env, { FOO: "bar" });
 });
@@ -37,30 +51,44 @@ test("preserves somebody else's PreToolUse hooks", () => {
       PostToolUse: [{ matcher: "Write", hooks: [{ type: "command", command: "prettier" }] }],
     },
   };
-  const { settings } = mergeHookRegistration(theirs);
+  const settings = merged(theirs);
   assert.ok(commandsIn(settings).includes("tdd-guard"));
   assert.ok(commandsIn(settings).includes(HOOK_COMMAND));
   assert.deepEqual(settings.hooks?.PostToolUse, theirs.hooks.PostToolUse);
 });
 
 test("joins an existing group with our matcher rather than duplicating it", () => {
-  const { settings } = mergeHookRegistration({
+  const settings = merged({
     hooks: { PreToolUse: [{ matcher: HOOK_MATCHER, hooks: [{ type: "command", command: "other" }] }] },
   });
-  assert.equal(settings.hooks?.PreToolUse?.length, 1);
+  assert.equal((settings.hooks?.PreToolUse as unknown[]).length, 1);
   assert.deepEqual(commandsIn(settings), ["other", HOOK_COMMAND]);
 });
 
 test("detects prior registration under a different matcher and does nothing", () => {
-  const { changed } = mergeHookRegistration({
+  const outcome = mergeHookRegistration({
     hooks: { PreToolUse: [{ matcher: "Write", hooks: [{ type: "command", command: HOOK_COMMAND }] }] },
   });
-  assert.equal(changed, false);
+  assert.equal(outcome.status, "unchanged");
 });
 
-test("registers a host timeout — the only real bound on stalling an edit", () => {
-  const { settings } = mergeHookRegistration({});
-  const entry = settings.hooks?.PreToolUse?.[0]?.hooks?.[0];
-  assert.equal(entry?.timeout, HOOK_TIMEOUT_SECONDS);
-  assert.ok(HOOK_TIMEOUT_SECONDS < 600, "must be far below Claude Code's 600s default");
+test("REFUSES to rewrite shapes it does not understand, rather than mangling them", () => {
+  // The prior implementation spread a string into ["g","u","a","r","d",...],
+  // silently destroying a working hook registration.
+  for (const [label, input] of [
+    ["PreToolUse as a string", { hooks: { PreToolUse: "guard.sh" } }],
+    ["PreToolUse as an object", { hooks: { PreToolUse: {} } }],
+    ["hooks as a string", { hooks: "echo hi" }],
+    ["a group that is a string", { hooks: { PreToolUse: ["guard.sh"] } }],
+    ["a group whose hooks is a string", { hooks: { PreToolUse: [{ matcher: "Edit", hooks: "x" }] } }],
+  ] as [string, ClaudeSettings][]) {
+    const outcome = mergeHookRegistration(input);
+    assert.equal(outcome.status, "refused", `${label} must be refused, not rewritten`);
+    assert.ok((outcome as { reason: string }).reason.length > 0);
+  }
+});
+
+test("the matcher follows configured tools", () => {
+  assert.equal(matcherFor(["Edit", "NotebookEdit"]), "Edit|NotebookEdit");
+  assert.equal(matcherFor([]), HOOK_MATCHER, "empty config falls back to the defaults");
 });

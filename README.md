@@ -66,6 +66,64 @@ A file that merely exists is not enforcement: `check` requires the named test to
 
 The hook matches the **text being written**, never the file path — path filters rot as code moves. Rules can also declare `endpoints:`, matched on resource segments, so a backend rule reaches a client that shares the route but not the vocabulary.
 
+## The ADR file
+
+`enforced-by` names the artifacts that hold the invariant. Two shapes, both checked:
+
+```yaml
+enforced-by:
+  - type: test                       # the file must exist AND name this test
+    file: tests/auth/test_login.py   #   inside test_globs, resolved to a real
+    name: test_entry_points          #   path inside the repo
+  - type: lint                       # existence only (spec §6.2)
+    file: ci/checks/no-direct-session.sh
+```
+
+`accepted` + class 1-3 requires at least one entry that resolves. `accepted` +
+class 4 requires a written `justification`. A rule with no `symbols` and no
+`endpoints` fails: the hook could never surface it, so nothing would ever
+deliver it to anyone.
+
+For a rule spanning repos, `enforced-by` may be a map instead. The gate verifies
+the repo it runs in and reports the rest as `unverified` rather than passing
+them silently:
+
+```yaml
+enforced-by:
+  centaur-tech:
+    - { type: test, file: tests/auth_matrix.py, name: test_entry_points }
+  mobile:
+    - { type: test, file: src/auth/login.test.ts, name: rejects_deactivated }
+```
+
+## `check --json`
+
+A stable contract, versioned by `version`. Additive changes only within a major.
+
+```json
+{
+  "version": 1,
+  "tool": "harmost",
+  "ok": false,
+  "summary": { "total": 2, "accepted": 2, "enforced": 1, "class4": 1, "unverified": 0 },
+  "adrs": [
+    {
+      "id": "ADR-001",
+      "status": "accepted",
+      "class": 2,
+      "verdict": "pass",
+      "file": "ADR-001-deactivated-users-must-never-authenticate.md",
+      "failures": [],
+      "unverified_repos": []
+    }
+  ]
+}
+```
+
+`verdict` is `pass`, `fail`, or `unverified`. `ok` is false iff any verdict is
+`fail`; that is exactly when the command exits 1. `enforced` counts artifacts
+that **resolved**, never artifacts that were merely declared.
+
 ## Design
 
 - **Git is canonical.** The ledger is text in a repo: diffed, blamed, reviewed, rebuildable. Any index or dashboard is derived, never the source.
@@ -75,6 +133,8 @@ The hook matches the **text being written**, never the file path — path filter
 ## Licence
 
 Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+Requires Node >= 22.12.
 
 `harmost` implements the Archon invariant-enforcement methodology.
 

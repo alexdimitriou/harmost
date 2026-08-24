@@ -26,22 +26,32 @@ function packagedTemplate(): string {
  * carry hooks, permissions and env we know nothing about. writeIfAbsent is
  * therefore wrong here; the idempotency lives in mergeHookRegistration instead.
  */
-function registerClaudeHook(path: string): ScaffoldResult {
+function registerClaudeHook(path: string, tools: readonly string[]): ScaffoldResult {
   let existing: ClaudeSettings = {};
   if (existsSync(path)) {
     try {
       existing = JSON.parse(readFileSync(path, "utf8")) as ClaudeSettings;
     } catch {
       // Their file, and it does not parse. Overwriting it would destroy
-      // permissions and hooks we cannot read; aborting would abandon the rest
-      // of the scaffold over a file that is not ours. Report and carry on.
-      return { path, outcome: "skipped" };
+      // permissions and hooks we cannot read. Refuse loudly: reporting this as
+      // a plain "exists" would leave the user believing the hook is registered
+      // when nothing was written — governance that is silently inert.
+      return { path, outcome: "refused", reason: "file is not valid JSON — left untouched, hook NOT registered" };
     }
   }
-  const { settings, changed } = mergeHookRegistration(existing);
-  if (!changed) return { path, outcome: "skipped" };
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(settings, null, 2) + "\n", "utf8");
+
+  const outcome = mergeHookRegistration(existing, tools);
+  if (outcome.status === "unchanged") return { path, outcome: "skipped" };
+  if (outcome.status === "refused") {
+    return { path, outcome: "refused", reason: `${outcome.reason} — left untouched, hook NOT registered` };
+  }
+
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify(outcome.settings, null, 2) + "\n", "utf8");
+  } catch (error) {
+    return { path, outcome: "refused", reason: (error as Error).message };
+  }
   return { path, outcome: "created" };
 }
 
@@ -60,11 +70,17 @@ export function init(options: InitOptions = {}): ScaffoldResult[] {
   // default while `new` reads the configured directory would silently strand
   // every edit they make to it.
   let adrDir = DEFAULT_ADR_DIR;
+  let tools: readonly string[] = [];
   if (existsSync(at(CONFIG_FILE))) {
     try {
-      adrDir = readConfig(root).adrDir;
+      const config = readConfig(root);
+      adrDir = config.adrDir;
+      // Register the matcher the config actually asks for. A hard-coded matcher
+      // means a tool added to hook.tools is never routed to us, and the hook
+      // stays silent on exactly the edits the user set out to cover.
+      tools = config.hook.tools;
     } catch {
-      // Unreadable config: fall back to the default rather than fail the scaffold.
+      // Unreadable config: fall back to the defaults rather than fail the scaffold.
     }
   }
 
@@ -72,7 +88,7 @@ export function init(options: InitOptions = {}): ScaffoldResult[] {
     writeIfAbsent(at(CONFIG_FILE), DEFAULT_CONFIG),
     writeIfAbsent(at(join(adrDir, "TEMPLATE.md")), packagedTemplate()),
   ];
-  if (options.claude) results.push(registerClaudeHook(at(CLAUDE_SETTINGS)));
+  if (options.claude) results.push(registerClaudeHook(at(CLAUDE_SETTINGS), tools));
   if (options.ci) results.push(writeIfAbsent(at(WORKFLOW_PATH), GITHUB_WORKFLOW));
   return results;
 }
@@ -80,14 +96,24 @@ export function init(options: InitOptions = {}): ScaffoldResult[] {
 export function report(results: ScaffoldResult[], root: string): string {
   const rel = (p: string) => (p.startsWith(root) ? p.slice(root.length + 1) : p);
   const created = results.filter((r) => r.outcome === "created");
+  const refused = results.filter((r) => r.outcome === "refused");
   const lines = [
     ...created.map((r) => `  created  ${rel(r.path)}`),
     ...results.filter((r) => r.outcome === "skipped").map((r) => `  exists   ${rel(r.path)}`),
+    ...refused.map((r) => `  REFUSED  ${rel(r.path)} — ${r.reason ?? "unknown reason"}`),
   ];
 
-  if (created.length === 0) {
+  if (refused.length > 0) {
+    lines.push(
+      "",
+      `${refused.length} item${refused.length === 1 ? "" : "s"} could not be written. Nothing was overwritten.`,
+      "Resolve the above and re-run — init is safe to repeat.",
+    );
+  }
+
+  if (created.length === 0 && refused.length === 0) {
     lines.push("", `Nothing to do — ${PRODUCT_NAME} is already initialised here.`);
-  } else {
+  } else if (created.length > 0) {
     lines.push(
       "",
       "Next:",

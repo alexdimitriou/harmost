@@ -17,7 +17,7 @@
   "author": "Alex Dimitriou",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12"
   },
   "bin": {
     "harmost": "dist/cli.js"
@@ -34,7 +34,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "prepublishOnly": "npm run build",
-    "test": "npm run build && node --test dist/*.test.js"
+    "test": "npm run build && node --test dist/*.test.js",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "commander": "^15.0.0",
