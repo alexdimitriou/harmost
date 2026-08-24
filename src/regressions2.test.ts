@@ -376,3 +376,19 @@ test("R25 — init says so when git will not carry what it just wrote", () => {
   assert.equal(after.find((r) => r.path.endsWith(join(".claude", "settings.json")))!.ignoredBy, undefined);
   assert.doesNotMatch(report(after, cwd), /WARNING — git ignores/);
 });
+
+test("R26 — an un-ignore rule is not read as an ignore rule", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "harmost-unignore-"));
+  const git = (...args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
+  git("init", "-q");
+  // The exact remedy R25's warning tells people to apply.
+  writeFileSync(join(cwd, ".gitignore"), ".claude/*\n!.claude/settings.json\n", "utf8");
+
+  const results = init({ cwd, claude: true });
+  const settings = results.find((r) => r.path.endsWith(join(".claude", "settings.json")))!;
+  // `git check-ignore -v` prints the last MATCHING pattern and exits 0 even when
+  // that pattern is a negation, so the naive reading warns about a file that
+  // travels perfectly well — and tells the user to fix what they just fixed.
+  assert.equal(settings.ignoredBy, undefined, "a `!` pattern means the path is NOT ignored");
+  assert.doesNotMatch(report(results, cwd), /WARNING — git ignores/);
+});

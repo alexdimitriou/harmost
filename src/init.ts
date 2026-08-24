@@ -93,10 +93,18 @@ function ignoredPaths(root: string, paths: readonly string[]): Map<string, strin
     if (tab === -1) continue;
     const rule = line.slice(0, tab);
     const path = line.slice(tab + 1);
-    // "<source>:<linenum>:<pattern>" — keep source and line, drop the pattern.
-    // Non-greedy so a pattern containing a colon cannot eat the line number.
-    const located = /^(.*?:\d+):/.exec(rule);
-    found.set(path, located ? located[1]! : rule);
+    // "<source>:<linenum>:<pattern>". Non-greedy so a pattern containing a
+    // colon cannot eat the line number.
+    const located = /^(.*?:\d+):(.*)$/.exec(rule);
+    if (located === null) continue;
+    // `-v` prints the last pattern that MATCHED, which may be a negation —
+    // and a negation means the path is not ignored after all. Under `-v` the
+    // exit status says only "something matched", so believing it reported
+    // `!.claude/settings.json` (the un-ignore rule someone added precisely to
+    // fix this warning) as ignored: the tool telling you to fix a thing you
+    // had already fixed.
+    if (located[2]!.startsWith("!")) continue;
+    found.set(path, located[1]!);
   }
   return found;
 }
