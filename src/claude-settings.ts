@@ -5,9 +5,19 @@ import { INVOCATION } from "./name.js";
 export const HOOK_MATCHER = HOOK_TOOLS.join("|");
 export const HOOK_COMMAND = `${INVOCATION} hook`;
 
+/**
+ * Seconds. The host kills the hook at this point and proceeds with the tool
+ * call — so this is the only real bound on how long the hook can stall an
+ * edit. Claude Code's default for command hooks is 600s, which is ten minutes
+ * inside a developer's edit loop. Our own budget check is self-policing and
+ * therefore class 4; this is enforced by the host and cannot be ignored.
+ */
+export const HOOK_TIMEOUT_SECONDS = 5;
+
 interface HookEntry {
   type: string;
   command: string;
+  timeout?: number;
 }
 interface MatcherGroup {
   matcher?: string;
@@ -43,7 +53,7 @@ export function mergeHookRegistration(
   );
   if (alreadyRegistered) return { settings: existing, changed: false };
 
-  const entry: HookEntry = { type: "command", command: HOOK_COMMAND };
+  const entry: HookEntry = { type: "command", command: HOOK_COMMAND, timeout: HOOK_TIMEOUT_SECONDS };
   const sameMatcher = preToolUse.findIndex((g) => g.matcher === HOOK_MATCHER);
 
   if (sameMatcher >= 0) {

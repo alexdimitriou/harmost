@@ -121,13 +121,13 @@ export function hookResponse(event: HookEvent, cwd: string): string | null {
   if (text.length === 0) return null;
 
   const { records } = loadLedger(join(cwd, config.adrDir));
+  // Checked here, where bailing still saves the matching and rendering work.
+  // Best-effort only: by definition it cannot bound work already done, so the
+  // real bound is the host `timeout` on the registration (see claude-settings).
+  if (Date.now() - started > MATCH_BUDGET_MS) return null;
+
   const matches = matchAdrs(text, records, config.hook.maxInjectedAdrs);
   if (matches.length === 0) return null;
-
-  if (Date.now() - started > MATCH_BUDGET_MS) {
-    // Over budget: say nothing rather than stall the edit. The gate still holds.
-    return null;
-  }
 
   return JSON.stringify({
     hookSpecificOutput: {

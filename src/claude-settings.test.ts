@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mergeHookRegistration, HOOK_COMMAND, HOOK_MATCHER } from "./claude-settings.js";
+import { mergeHookRegistration, HOOK_COMMAND, HOOK_MATCHER, HOOK_TIMEOUT_SECONDS } from "./claude-settings.js";
 
 const commandsIn = (s: ReturnType<typeof mergeHookRegistration>["settings"]) =>
   (s.hooks?.PreToolUse ?? []).flatMap((g) => (g.hooks ?? []).map((h) => h.command));
@@ -9,7 +9,7 @@ test("registers into an empty settings file", () => {
   const { settings, changed } = mergeHookRegistration({});
   assert.equal(changed, true);
   assert.deepEqual(settings.hooks?.PreToolUse, [
-    { matcher: HOOK_MATCHER, hooks: [{ type: "command", command: HOOK_COMMAND }] },
+    { matcher: HOOK_MATCHER, hooks: [{ type: "command", command: HOOK_COMMAND, timeout: HOOK_TIMEOUT_SECONDS }] },
   ]);
 });
 
@@ -56,4 +56,11 @@ test("detects prior registration under a different matcher and does nothing", ()
     hooks: { PreToolUse: [{ matcher: "Write", hooks: [{ type: "command", command: HOOK_COMMAND }] }] },
   });
   assert.equal(changed, false);
+});
+
+test("registers a host timeout — the only real bound on stalling an edit", () => {
+  const { settings } = mergeHookRegistration({});
+  const entry = settings.hooks?.PreToolUse?.[0]?.hooks?.[0];
+  assert.equal(entry?.timeout, HOOK_TIMEOUT_SECONDS);
+  assert.ok(HOOK_TIMEOUT_SECONDS < 600, "must be far below Claude Code's 600s default");
 });
