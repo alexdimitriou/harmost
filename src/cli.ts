@@ -8,6 +8,7 @@ import { init, report } from "./init.js";
 import { newAdr, reportNew } from "./new.js";
 import { check } from "./check.js";
 import { asJson, asTable } from "./report-check.js";
+import { hookResponse, type HookEvent } from "./hook.js";
 
 const pkg = JSON.parse(
   readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8"),
@@ -91,6 +92,21 @@ program
 program
   .command("hook")
   .description("deterministic context delivery — invoked by the agent host, not by you")
-  .action(() => NOT_YET("hook"));
+  .action(async () => {
+    // Every failure path here exits 0 in silence. This process sits inside the
+    // developer's edit loop; a hook that errors takes their session with it,
+    // and a governance tool people disable has enforced nothing.
+    try {
+      if (process.stdin.isTTY) process.exit(0);
+      const chunks: Buffer[] = [];
+      for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+      const event = JSON.parse(Buffer.concat(chunks).toString("utf8")) as HookEvent;
+      const response = hookResponse(event, process.cwd());
+      if (response !== null) process.stdout.write(response + "\n");
+    } catch {
+      // Intentionally silent.
+    }
+    process.exit(0);
+  });
 
 program.parse();
