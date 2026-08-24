@@ -9,6 +9,9 @@ applies-to:
   - "src/**"              # informational globs
 symbols:                  # content-match terms; the hook greps edited text for these
   - <identifier>
+endpoints: []             # optional: API routes, matched on resource segments.
+                          # Reaches clients that share the route but not the
+                          # vocabulary — e.g. "/AppUsers/login".
 enforced-by:              # required when status: accepted and class is 1-3
   []
 supersedes: null

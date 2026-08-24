@@ -6,8 +6,8 @@ Diff review scales with how much code an agent writes. That is a treadmill: the 
 
 `harmost` is the machinery that makes that true: an **ADR ledger in git**, a **coverage gate in CI**, and **deterministic context delivery** to the coding agent.
 
-> **Status: v0.0.1 — this release reserves the name and publishes the command surface.**
-> The tracer bullet (`init`, `new`, `check`, `hook`) lands in **v0.1.0**.
+> **v0.1.0 — `init`, `new`, `check` and `hook` all work.** Single repo, Claude Code
+> adapter. Multi-repo verification, mining and the dashboard are roadmap, not stubs.
 
 ---
 
@@ -60,7 +60,11 @@ npx harmost new "Deactivated users must never authenticate" \
 npx harmost check                          # the gate — exit 1 if a rule lacks enforcement
 ```
 
-Point the new ADR's `enforced-by` at a test that doesn't exist yet and `check` fails by name. Write the test and it passes. Then edit any code containing `create_session` and the hook puts the rule in front of the agent before it writes a line — because it was asked to, deterministically, not because it remembered.
+Point the new ADR's `enforced-by` at a test that doesn't exist yet and `check` fails by name. Write the test and it passes. Then edit any code containing `create_session` and the hook puts the rule in front of the agent before it writes a line — because the host was told to deliver it, not because the agent remembered to look.
+
+A file that merely exists is not enforcement: `check` requires the named test to actually be in it, matched on whole words, so `test_login_matrix_extra` never satisfies a claim about `test_login`.
+
+The hook matches the **text being written**, never the file path — path filters rot as code moves. Rules can also declare `endpoints:`, matched on resource segments, so a backend rule reaches a client that shares the route but not the vocabulary.
 
 ## Design
 
