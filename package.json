@@ -1,0 +1,28 @@
+{
+  "name": "harmost",
+  "version": "0.0.1",
+  "description": "Make architectural invariants enforceable in AI-assisted development: an ADR ledger in git, a coverage gate in CI, and deterministic context delivery to coding agents.",
+  "keywords": ["adr", "architecture", "governance", "invariants", "fitness-functions", "ai", "claude-code", "ci", "merge-gate"],
+  "license": "Apache-2.0",
+  "author": "Alex Dimitriou",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "bin": { "harmost": "dist/cli.js" },
+  "main": "dist/cli.js",
+  "files": ["dist", "templates", "README.md", "LICENSE", "NOTICE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "commander": "^15.0.0",
+    "fast-glob": "^3.3.3",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2"
+  },
+  "publishConfig": { "access": "public" }
+}
