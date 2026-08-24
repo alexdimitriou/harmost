@@ -310,3 +310,43 @@ test("Q7 — the JSON contract carries the new states additively", () => {
   assert.ok(Array.isArray(parsed.adrs[0].declared));
   assert.equal(parsed.summary.class4, 1);
 });
+
+/**
+ * Round 3 (2026-08-24) — found while preparing the first company pilot.
+ *
+ * The hook bounded its work with a wall-clock deadline armed *before* the
+ * ledger was read, so a large ledger spent the budget on I/O and delivered
+ * nothing. R13 caught the total silence; these two catch the shape of the bug
+ * rather than one symptom of it.
+ */
+test("R23 — delivery does not degrade with position in the ledger", () => {
+  const cwd = sandbox();
+  const LEDGER = 500;
+  let last = "";
+  for (let i = 0; i < LEDGER; i += 1) {
+    last = `sym_${i}_alpha_beta_gamma`;
+    accept(newAdr(`Rule ${i}`, { class: "4", symbols: last, cwd }).path);
+  }
+  // The LAST record, not an early one: a budget that runs out mid-scan silently
+  // truncates the tail of the ledger, so the ADRs least likely to be delivered
+  // are the ones most recently ratified.
+  const out = hookResponse({ tool_name: "Edit", tool_input: { new_string: `${last}()` } }, cwd);
+  assert.notEqual(out, null, "the newest ADR in a large ledger must still be delivered");
+  assert.match(
+    JSON.parse(out!).hookSpecificOutput.additionalContext,
+    new RegExp(`ADR-${String(LEDGER).padStart(3, "0")}`),
+  );
+});
+
+test("R24 — no wall clock in the delivery path", () => {
+  const source = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "hook.ts");
+  assert.ok(existsSync(source), `expected the hook source at ${source}`);
+  // Structural, not stylistic. Any clock read makes which ADRs an agent is shown
+  // a function of machine load, so the same edit delivers different rules on
+  // different runs and a failure to deliver is unreproducible from a clean clone.
+  assert.doesNotMatch(
+    readFileSync(source, "utf8"),
+    /Date\.now\(\)|performance\.now\(\)|new Date\(/,
+    "delivery must be a pure function of (edited text, ledger)",
+  );
+});

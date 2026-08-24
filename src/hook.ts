@@ -21,8 +21,6 @@ import { join } from "node:path";
  *      remove it.
  */
 
-const MATCH_BUDGET_MS = 200;
-
 /** Fields carrying text the agent is about to write. `file_path` is deliberately
  *  excluded — matching the edited text rather than the path is the point,
  *  because path filters rot as code moves. */
@@ -65,36 +63,74 @@ export interface Match {
 /**
  * Matching cost is |text| x |symbols|, and both are attacker-shaped: a
  * multi-megabyte Write against a few hundred ADRs took seconds, which the host
- * then killed at its timeout. Bounding the scanned text keeps the hook inside
- * its budget; a symbol that appears only past this offset is missed, which is
- * the cheap direction to be wrong in — the merge gate still holds.
+ * then killed at its timeout. Bounding the scanned text keeps the hook cheap; a
+ * symbol that appears only past this offset is missed, which is the cheap
+ * direction to be wrong in — the merge gate still holds.
  */
 const MAX_SCANNED_CHARS = 256 * 1024;
 
-export function matchAdrs(
-  text: string,
-  records: AdrRecord[],
-  cap: number,
-  deadline = Number.POSITIVE_INFINITY,
-): Match[] {
+/** Maximal runs of word characters — the same class `wholeWord` uses for its
+ *  boundaries, which is what makes the set lookup below exact rather than an
+ *  approximation of it. */
+const WORD_RUN = /[\p{L}\p{N}_$]+/gu;
+const NON_WORD = /[^\p{L}\p{N}_$]+/u;
+const SIMPLE_TERM = /^[\p{L}\p{N}_$]+$/u;
+
+/**
+ * Delivery is a pure function of (text, ledger).
+ *
+ * It used to be bounded by a wall-clock deadline, which quietly made it a
+ * function of machine load as well: the same edit injected different ADRs on
+ * different runs. Worse, the deadline was armed before the ledger was read, so
+ * a large ledger spent the whole budget on I/O and matched NOTHING. A hook that
+ * goes silent precisely where the ledger is biggest is worse than no hook,
+ * because silence is indistinguishable from "no rule applies" — and this is the
+ * one mechanism whose entire purpose is to not depend on anyone remembering.
+ *
+ * So the clock is gone and the cost is bounded structurally instead. Every
+ * `wholeWord` term is delimited by WORD_RUN characters on both sides, so for a
+ * term that is itself all word characters, "occurs as a whole word" is exactly
+ * "equals one of the text's maximal word runs": one tokenising pass, then O(1)
+ * lookups, rather than a full scan of the text per symbol. Terms carrying
+ * punctuation (`AppUser.login`, `/Assets`) still need a scan, but only once a
+ * necessary condition on their parts holds — if such a term occurs at all, each
+ * of its word runs is itself a maximal run of the text, so a term whose parts
+ * are absent is rejected by lookup alone.
+ */
+function occurrenceTest(scanned: string): (term: string) => boolean {
+  const tokens = new Set<string>();
+  for (const [run] of scanned.matchAll(WORD_RUN)) tokens.add(run);
+  const memo = new Map<string, boolean>();
+
+  return (term: string): boolean => {
+    if (term.length === 0) return false;
+    if (SIMPLE_TERM.test(term)) return tokens.has(term);
+    const cached = memo.get(term);
+    if (cached !== undefined) return cached;
+    const parts = term.split(NON_WORD).filter((part) => part.length > 0);
+    const answer = parts.every((part) => tokens.has(part)) && wholeWord(term).test(scanned);
+    memo.set(term, answer);
+    return answer;
+  };
+}
+
+export function matchAdrs(text: string, records: AdrRecord[], cap: number): Match[] {
   if (text.length === 0) return [];
   const scanned = text.length > MAX_SCANNED_CHARS ? text.slice(0, MAX_SCANNED_CHARS) : text;
+  const occurs = occurrenceTest(scanned);
   const matches: Match[] = [];
 
   for (const record of records) {
-    // Checked per record so a pathological ledger degrades to fewer matches
-    // rather than to a hook the host has to kill.
-    if (Date.now() > deadline) break;
     if (record.status === "superseded" || record.status === "rejected") continue;
     let hits = 0;
     for (const symbol of record.symbols) {
-      if (symbol.length > 0 && wholeWord(symbol).test(scanned)) hits += 1;
+      if (occurs(symbol)) hits += 1;
     }
     for (const endpoint of record.endpoints) {
       const needles = endpointNeedles(endpoint);
       // `[].every()` is vacuously true: without this guard a degenerate route
       // such as "/" or "/api/v1" would match every edit ever made.
-      if (needles.length > 0 && needles.every((n) => wholeWord(n).test(scanned))) hits += 1;
+      if (needles.length > 0 && needles.every((n) => occurs(n))) hits += 1;
     }
     if (hits > 0) matches.push({ record, hits });
   }
@@ -148,7 +184,6 @@ export interface HookEvent {
 
 /** Returns the JSON to print, or null to say nothing at all. */
 export function hookResponse(event: HookEvent, cwd: string): string | null {
-  const started = Date.now();
   const config = readConfig(cwd);
 
   if (config.hook.tools.length > 0 && typeof event.tool_name === "string") {
@@ -164,11 +199,7 @@ export function hookResponse(event: HookEvent, cwd: string): string | null {
   // what makes the hook's silence recoverable.
   const { records } = loadLedger(join(cwd, config.adrDir));
 
-  // The budget bounds the work; it does not veto the result. Returning null
-  // here because loading was slow meant a large ledger silently delivered
-  // NOTHING — the mechanism switching itself off precisely where the ledger is
-  // biggest and delivery matters most.
-  const matches = matchAdrs(text, records, config.hook.maxInjectedAdrs, started + MATCH_BUDGET_MS);
+  const matches = matchAdrs(text, records, config.hook.maxInjectedAdrs);
   if (matches.length === 0) return null;
 
   return JSON.stringify({
