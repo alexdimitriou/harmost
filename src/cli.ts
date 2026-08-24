@@ -6,6 +6,8 @@ import { dirname, join } from "node:path";
 import { PRODUCT_NAME, INVOCATION } from "./name.js";
 import { init, report } from "./init.js";
 import { newAdr, reportNew } from "./new.js";
+import { check } from "./check.js";
+import { asJson, asTable } from "./report-check.js";
 
 const pkg = JSON.parse(
   readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8"),
@@ -75,7 +77,16 @@ program
   .command("check")
   .description("the gate: every accepted ADR must have a live enforcement artifact")
   .option("--json", "machine-readable output (public contract)")
-  .action(() => NOT_YET("check"));
+  .action((options: { json?: boolean }) => {
+    try {
+      const report = check(process.cwd());
+      process.stdout.write((options.json ? asJson(report) : asTable(report)) + "\n");
+      process.exit(report.ok ? 0 : 1);
+    } catch (error) {
+      process.stderr.write(`${PRODUCT_NAME}: ${(error as Error).message}\n`);
+      process.exit(2);
+    }
+  });
 
 program
   .command("hook")

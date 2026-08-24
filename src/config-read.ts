@@ -8,6 +8,8 @@ export interface Config {
   adrDir: string;
   testGlobs: string[];
   hook: { tools: string[]; maxInjectedAdrs: number };
+  /** The name this repo is known by in the ledger, when the ledger names repos. */
+  repo?: string;
 }
 
 export class NotInitialisedError extends Error {
@@ -23,6 +25,7 @@ interface RawConfig {
   version?: number;
   adr_dir?: string;
   test_globs?: string[];
+  repo?: string;
   hook?: { tools?: string[]; max_injected_adrs?: number };
 }
 
@@ -40,5 +43,6 @@ export function readConfig(root: string): Config {
       tools: raw.hook?.tools ?? ["Edit", "Write", "MultiEdit"],
       maxInjectedAdrs: raw.hook?.max_injected_adrs ?? 3,
     },
+    repo: raw.repo,
   };
 }
