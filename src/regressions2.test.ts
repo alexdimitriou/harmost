@@ -264,3 +264,49 @@ test("R8b — merge refuses without throwing, for every unrecognised shape", () 
     assert.equal(outcome.status, "refused");
   }
 });
+
+test("Q7 — an artifact that merely exists is `declared`, never `enforced`", () => {
+  const cwd = sandbox();
+  const { path } = newAdr("Named but unrun", { class: "2", symbols: "s", cwd });
+  accept(path, goodTest(cwd));
+  const report = check(cwd);
+
+  assert.equal(report.ok, true, "resolution succeeded, so the gate still passes");
+  assert.equal(report.summary.enforced, 0, "nothing runs the test, so nothing is enforced");
+  assert.equal(report.summary.class4, 1, "and the headline metric counts it as exposure");
+  assert.equal(report.results[0]?.unenforced, true);
+  assert.match(report.results[0]!.declared.join(" "), /does not run it/);
+});
+
+test("Q7 — a lint artifact is declared, not enforced", () => {
+  const cwd = sandbox();
+  const { path } = newAdr("Lint only", { class: "3", symbols: "s", cwd });
+  accept(path, "enforced-by:\n  - type: lint\n    file: harmost.yaml");
+  const report = check(cwd);
+  assert.equal(report.summary.class4, 1, "a file that exists holds nothing");
+  assert.match(report.results[0]!.declared.join(" "), /nothing runs it/);
+});
+
+test("Q7 — the class-4 total counts reality, not the frontmatter's claim", () => {
+  const cwd = sandbox();
+  // One honest class 4, one class 2 that nothing enforces.
+  const four = newAdr("Honest exposure", { class: "4", symbols: "a", cwd });
+  accept(four.path);
+  writeFileSync(four.path,
+    readFileSync(four.path, "utf8").replace("justification: null", 'justification: "no choke point yet"'), "utf8");
+  const two = newAdr("Claims class 2", { class: "2", symbols: "b", cwd });
+  accept(two.path, goodTest(cwd));
+
+  assert.equal(check(cwd).summary.class4, 2, "both are uninsured, whatever they declare");
+});
+
+test("Q7 — the JSON contract carries the new states additively", () => {
+  const cwd = sandbox();
+  const { path } = newAdr("Contract", { class: "2", symbols: "s", cwd });
+  accept(path, goodTest(cwd));
+  const parsed = JSON.parse(run(cwd, ["check", "--json"]).stdout);
+  assert.equal(parsed.version, 1, "additive change, same major");
+  assert.equal(parsed.adrs[0].unenforced, true);
+  assert.ok(Array.isArray(parsed.adrs[0].declared));
+  assert.equal(parsed.summary.class4, 1);
+});

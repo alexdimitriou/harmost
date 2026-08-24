@@ -79,6 +79,27 @@ enforced-by:
     file: ci/checks/no-direct-session.sh
 ```
 
+### Resolving is not enforcing
+
+An artifact resolves when its file exists and names what it claims. It is
+**enforced** only when something actually runs it. `check` is contracted fast,
+offline and deterministic, so it executes nothing — but it can tell that an
+entry with no `run:` command and no built-in rule could never hold an
+invariant, and it says so:
+
+```
+ADR-001  accepted      2  ok
+    declared: tests/auth.py names test_matrix, but `check` does not run it
+
+1 ADR · 1 accepted · 0 enforced
+
+CLASS-4 COUNT: 1   (uninsured exposure — nothing but attention holds these)
+```
+
+The gate still passes: the artifact is real and your CI may well run it. What
+changes is the count. **An invariant nothing executes is exposure, whatever the
+frontmatter declares**, and the class-4 number is the one you report upward.
+
 `accepted` + class 1-3 requires at least one entry that resolves. `accepted` +
 class 4 requires a written `justification`. A rule with no `symbols` and no
 `endpoints` fails: the hook could never surface it, so nothing would ever

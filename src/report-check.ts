@@ -20,6 +20,8 @@ export function asJson(report: CheckReport): string {
         verdict: r.verdict,
         file: r.file,
         failures: r.failures,
+        declared: r.declared,
+        unenforced: r.unenforced,
         unverified_repos: r.unverifiedRepos,
       })),
     },
@@ -57,6 +59,7 @@ export function asTable(report: CheckReport): string {
       `${r.id.padEnd(idW)}  ${r.status.padEnd(stW)}  ${String(r.class ?? "-").padStart(5)}  ${MARK[r.verdict]}`,
     );
     for (const failure of r.failures) lines.push(`${" ".repeat(idW + stW + 11)}  ${failure}`);
+    for (const detail of r.declared) lines.push(`${" ".repeat(idW + stW + 11)}  declared: ${detail}`);
     for (const repo of r.unverifiedRepos) {
       lines.push(`${" ".repeat(idW + stW + 11)}  unverified from here: ${repo}`);
     }
@@ -68,8 +71,21 @@ export function asTable(report: CheckReport): string {
     `${total} ADR${total === 1 ? "" : "s"} · ${accepted} accepted · ${enforced} enforced`,
     "",
     // The headline metric: invariants held by nothing but human attention.
-    `CLASS-4 COUNT: ${class4}${class4 === 0 ? "" : "   (uninsured exposure — every one of these is held by attention alone)"}`,
+    `CLASS-4 COUNT: ${class4}${class4 === 0 ? "" : "   (uninsured exposure — nothing but attention holds these)"}`,
   );
+
+  const unenforced = report.results.filter((r) => r.unenforced);
+  if (unenforced.length > 0) {
+    lines.push(
+      "",
+      `${unenforced.length} of those declare class 1-3 but nothing enforces them:`,
+      ...unenforced.map((r) => `  ${r.id} — artifacts resolve, but none of them run`),
+      "",
+      "An artifact that merely exists holds no invariant. Give it a `run:`",
+      "command or a built-in rule, or record the ADR at class 4 with a",
+      "written justification — but it counts as exposure either way.",
+    );
+  }
   if (unverified > 0) {
     lines.push(
       "",

@@ -14,6 +14,10 @@ export interface AdrResult {
   verdict: Verdict;
   file: string;
   failures: string[];
+  /** Artifacts that resolve but hold nothing — see Q7. */
+  declared: string[];
+  /** Accepted class 1-3, but nothing enforces it. Counts as class 4. */
+  unenforced: boolean;
   unverifiedRepos: string[];
 }
 
@@ -42,19 +46,38 @@ function namedInFile(source: string, name: string): boolean {
  *  hook can still never surface it. */
 const isPlaceholder = (term: string): boolean => /^<.*>$/.test(term.trim());
 
+export type ArtifactState = "enforced" | "declared" | "failed";
+export interface ArtifactResult {
+  state: ArtifactState;
+  detail: string;
+}
+
+/**
+ * Q7 (2026-08-24): resolving is not enforcing.
+ *
+ * v0.1 called an artifact `enforced` when its file existed and named the test
+ * it claimed. Nothing ran. That is a class-4 guarantee reported under a class-3
+ * label — the mislabelling the taxonomy exists to forbid — and it understated
+ * the class-4 count, which methodology §8 reports upward as uninsured exposure.
+ *
+ * `check` cannot execute anything and must not start: §6 contracts it as fast,
+ * offline and deterministic. But it can tell by inspection that an entry with
+ * no `run:` and no `rule:` could never hold an invariant, and say so.
+ * Execution is v0.2's `verify`.
+ */
 function resolveArtifact(
   root: string,
   artifact: Artifact,
   testGlobs: string[],
   cache: Map<string, string | null>,
-): string | null {
+): ArtifactResult {
   if (!artifact || typeof artifact.file !== "string" || artifact.file.length === 0) {
-    return "enforced-by entry has no `file`";
+    return { state: "failed", detail: "enforced-by entry has no `file`" };
   }
   const path = join(root, artifact.file);
-  if (!existsSync(path)) return `${artifact.file} does not exist`;
+  if (!existsSync(path)) return { state: "failed", detail: `${artifact.file} does not exist` };
 
-  if (!statSync(path).isFile()) return `${artifact.file} is not a file`;
+  if (!statSync(path).isFile()) return { state: "failed", detail: `${artifact.file} is not a file` };
 
   // Containment is a determinism requirement, not a security one: `check` is
   // contracted deterministic and offline, and a verdict that depends on a file
@@ -64,21 +87,21 @@ function resolveArtifact(
   try {
     real = realpathSync(path);
   } catch {
-    return `${artifact.file} could not be resolved`;
+    return { state: "failed", detail: `${artifact.file} could not be resolved` };
   }
   const outside = relative(realpathSync(root), real);
   if (outside.startsWith("..") || isAbsolute(outside)) {
-    return `${artifact.file} resolves outside the repository — enforcement must be reproducible from a clean clone`;
+    return { state: "failed", detail: `${artifact.file} resolves outside the repository — enforcement must be reproducible from a clean clone` };
   }
 
   if (artifact.type === "lint") {
-    // Existence only for the tracer. Verifying a lint actually runs belongs to
-    // the host repo's own CI; this gate verifies the declared artifact is there.
-    return null;
+    // Existence only (spec §6.2). A file that exists holds nothing, so this is
+    // declared, never enforced.
+    return { state: "declared", detail: `${artifact.file} exists but nothing runs it` };
   }
-  if (artifact.type !== "test") return `unknown enforced-by type "${String(artifact.type)}"`;
+  if (artifact.type !== "test") return { state: "failed", detail: `unknown enforced-by type "${String(artifact.type)}"` };
   if (typeof artifact.name !== "string" || artifact.name.length === 0) {
-    return `${artifact.file} is declared as a test but names no test`;
+    return { state: "failed", detail: `${artifact.file} is declared as a test but names no test` };
   }
   // test_globs is where tests are allowed to live. Without this the config key
   // is decorative and a test artifact can point at production source, so the
@@ -86,10 +109,10 @@ function resolveArtifact(
   if (testGlobs.length === 0) {
     // An empty allowlist permits nothing. Reading it as "no constraint" would
     // let one config edit reopen the hole the allowlist exists to close.
-    return `test_globs is empty — no location is permitted for a test artifact, so ${artifact.file} cannot satisfy this ADR`;
+    return { state: "failed", detail: `test_globs is empty — no location is permitted for a test artifact, so ${artifact.file} cannot satisfy this ADR` };
   }
   if (!testGlobs.some((glob) => matchesGlob(artifact.file, glob))) {
-    return `${artifact.file} is outside test_globs (${testGlobs.join(", ")}) — a test must live where tests live`;
+    return { state: "failed", detail: `${artifact.file} is outside test_globs (${testGlobs.join(", ")}) — a test must live where tests live` };
   }
   if (!cache.has(path)) {
     try {
@@ -99,15 +122,24 @@ function resolveArtifact(
     }
   }
   const source = cache.get(path) ?? null;
-  if (source === null) return `${artifact.file} could not be read`;
-  return namedInFile(source, artifact.name)
-    ? null
-    : `${artifact.file} does not contain a test named ${artifact.name}`;
+  if (source === null) return { state: "failed", detail: `${artifact.file} could not be read` };
+  if (!namedInFile(source, artifact.name)) {
+    return { state: "failed", detail: `${artifact.file} does not contain a test named ${artifact.name}` };
+  }
+  // The test exists and is named. Whether it RUNS, and whether it passes, this
+  // gate cannot know — so the honest state is declared.
+  return {
+    state: "declared",
+    detail: `${artifact.file} names ${artifact.name}, but \`check\` does not run it`,
+  };
 }
 
 function validate(record: AdrRecord, ledger: AdrRecord[], root: string, thisRepo: string, testGlobs: string[], cache: Map<string, string | null>) {
   const failures: string[] = [];
+  const declared: string[] = [];
   const unverifiedRepos: string[] = [];
+  let enforcedHere = false;
+  let unenforced = false;
 
   // Rule 1 — required fields.
   for (const [field, value] of [
@@ -179,9 +211,16 @@ function validate(record: AdrRecord, ledger: AdrRecord[], root: string, thisRepo
         failures.push("accepted but `enforced-by` is empty — nothing holds this invariant");
       } else {
         for (const artifact of local) {
-          const failure = resolveArtifact(root, artifact, testGlobs, cache);
-          if (failure !== null) failures.push(failure);
+          const resolved = resolveArtifact(root, artifact, testGlobs, cache);
+          if (resolved.state === "failed") failures.push(resolved.detail);
+          else if (resolved.state === "declared") declared.push(resolved.detail);
+          else enforcedHere = true;
         }
+        // Q7: an accepted class-1-3 ADR whose artifacts all merely resolve is
+        // not enforced by anything. It is not a build failure — the artifacts
+        // are real and the host CI may well run them — but it must stop being
+        // counted as enforced, and it belongs in the class-4 total.
+        if (!enforcedHere && declared.length > 0) unenforced = true;
         if (local.length === 0 && repos.length > 0) {
           failures.push(`accepted but declares no enforcement for this repo (${thisRepo})`);
         }
@@ -195,7 +234,7 @@ function validate(record: AdrRecord, ledger: AdrRecord[], root: string, thisRepo
     }
   }
 
-  return { failures, unverifiedRepos };
+  return { failures, declared, unverifiedRepos, unenforced };
 }
 
 export function check(cwd: string): CheckReport {
@@ -211,11 +250,15 @@ export function check(cwd: string): CheckReport {
     verdict: "fail" as Verdict,
     file: e.file,
     failures: [e.message],
+    declared: [],
+    unenforced: false,
     unverifiedRepos: [],
   }));
 
   for (const record of records) {
-    const { failures, unverifiedRepos } = validate(record, records, cwd, thisRepo, config.testGlobs, cache);
+    const { failures, declared, unverifiedRepos, unenforced } = validate(
+      record, records, cwd, thisRepo, config.testGlobs, cache,
+    );
     results.push({
       id: record.id || record.file,
       status: String(record.status),
@@ -223,22 +266,31 @@ export function check(cwd: string): CheckReport {
       verdict: failures.length > 0 ? "fail" : unverifiedRepos.length > 0 ? "unverified" : "pass",
       file: record.file,
       failures,
+      declared,
+      unenforced,
       unverifiedRepos,
     });
   }
 
   const accepted = records.filter((r) => r.status === "accepted");
-  const verdictOf = new Map(results.map((r) => [r.file, r.verdict]));
+  const resultOf = new Map(results.map((r) => [r.file, r]));
+  const holdsSomething = (r: AdrRecord): boolean => {
+    const result = resultOf.get(r.file);
+    return result !== undefined && result.verdict !== "fail" && !result.unenforced;
+  };
   const summary: CheckSummary = {
     total: records.length,
     accepted: accepted.length,
-    // "enforced" means the artifact actually resolved — not that one was
-    // declared. Counting declarations would report a green number over a
-    // missing test, which is the silent hole this gate exists to prevent.
-    enforced: accepted.filter(
-      (r) => [1, 2, 3].includes(r.enforcementClass) && verdictOf.get(r.file) !== "fail",
-    ).length,
-    class4: accepted.filter((r) => r.enforcementClass === 4).length,
+    // "enforced" means something actually holds the invariant — not that an
+    // artifact was declared, and (Q7) not that a file merely exists naming a
+    // test nobody runs. Both weaker readings report a green number over an
+    // invariant nothing defends.
+    enforced: accepted.filter((r) => [1, 2, 3].includes(r.enforcementClass) && holdsSomething(r)).length,
+    // Q7: an accepted class-1-3 ADR that nothing enforces IS class-4 exposure,
+    // whatever the frontmatter claims. The headline metric counts reality.
+    class4:
+      accepted.filter((r) => r.enforcementClass === 4).length +
+      accepted.filter((r) => [1, 2, 3].includes(r.enforcementClass) && !holdsSomething(r)).length,
     unverified: results.filter((r) => r.verdict === "unverified").length,
   };
 

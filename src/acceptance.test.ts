@@ -91,7 +91,12 @@ test("CLI spec §9 — the whole tracer, end to end", () => {
   );
   const green = run(cwd, ["check"]);
   assert.equal(green.status, 0, green.stdout);
-  assert.match(green.stdout, /CLASS-4 COUNT: 0/);
+  // §9 criterion 5 originally expected "class-4 count 0" here. Q7 (2026-08-24)
+  // amended it: the test file exists and names the test, but `check` does not
+  // run it, so the ADR is exposure until something executes it. The gate still
+  // passes — resolution succeeded — but the metric no longer flatters.
+  assert.match(green.stdout, /CLASS-4 COUNT: 1/);
+  assert.match(green.stdout, /none of them run/);
 
   // 6. the hook delivers on a symbol match, and is silent otherwise.
   const hit = run(cwd, ["hook"], JSON.stringify({
@@ -127,7 +132,8 @@ test("CLI spec §9 — the whole tracer, end to end", () => {
   );
   const justified = run(cwd, ["check"]);
   assert.equal(justified.status, 0, justified.stdout);
-  assert.match(justified.stdout, /CLASS-4 COUNT: 1/);
+  // Two now: the class-4 ADR itself, plus ADR-001 whose test nothing runs.
+  assert.match(justified.stdout, /CLASS-4 COUNT: 2/);
 });
 
 test("the hook never breaks the edit loop, whatever it is handed", () => {

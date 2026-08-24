@@ -61,9 +61,11 @@ test("accepted passes once the named test exists — criterion 5", () => {
   mkdirSync(join(cwd, "tests"), { recursive: true });
   writeFileSync(join(cwd, "tests/matrix.py"), "def test_matrix():\n    assert True\n", "utf8");
   const report = check(cwd);
-  assert.equal(report.ok, true);
-  assert.equal(report.summary.enforced, 1);
-  assert.equal(report.summary.class4, 0);
+  assert.equal(report.ok, true, "resolution succeeded, so the gate passes");
+  // Q7: resolving is not enforcing. Nothing runs this test, so it holds nothing.
+  assert.equal(report.summary.enforced, 0);
+  assert.equal(report.summary.class4, 1);
+  assert.equal(report.results[0]?.unenforced, true);
 });
 
 test("a file that exists but does not name the test still fails", () => {
