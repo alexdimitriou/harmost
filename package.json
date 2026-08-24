@@ -14,6 +14,14 @@
     "merge-gate"
   ],
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alexdimitriou/harmost.git"
+  },
+  "homepage": "https://github.com/alexdimitriou/harmost#readme",
+  "bugs": {
+    "url": "https://github.com/alexdimitriou/harmost/issues"
+  },
   "author": "Alex Dimitriou",
   "type": "module",
   "engines": {
