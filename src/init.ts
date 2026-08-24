@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { CONFIG_FILE, DEFAULT_ADR_DIR, INVOCATION, PRODUCT_NAME } from "./name.js";
+import { readConfig } from "./config-read.js";
 import { DEFAULT_CONFIG } from "./config.js";
 import { writeIfAbsent, type ScaffoldResult } from "./scaffold.js";
 import { mergeHookRegistration, type ClaudeSettings } from "./claude-settings.js";
@@ -26,9 +27,17 @@ function packagedTemplate(): string {
  * therefore wrong here; the idempotency lives in mergeHookRegistration instead.
  */
 function registerClaudeHook(path: string): ScaffoldResult {
-  const existing: ClaudeSettings = existsSync(path)
-    ? (JSON.parse(readFileSync(path, "utf8")) as ClaudeSettings)
-    : {};
+  let existing: ClaudeSettings = {};
+  if (existsSync(path)) {
+    try {
+      existing = JSON.parse(readFileSync(path, "utf8")) as ClaudeSettings;
+    } catch {
+      // Their file, and it does not parse. Overwriting it would destroy
+      // permissions and hooks we cannot read; aborting would abandon the rest
+      // of the scaffold over a file that is not ours. Report and carry on.
+      return { path, outcome: "skipped" };
+    }
+  }
   const { settings, changed } = mergeHookRegistration(existing);
   if (!changed) return { path, outcome: "skipped" };
   mkdirSync(dirname(path), { recursive: true });
@@ -47,9 +56,21 @@ export function init(options: InitOptions = {}): ScaffoldResult[] {
     );
   }
 
+  // Honour an adr_dir the user already configured. Writing the template to the
+  // default while `new` reads the configured directory would silently strand
+  // every edit they make to it.
+  let adrDir = DEFAULT_ADR_DIR;
+  if (existsSync(at(CONFIG_FILE))) {
+    try {
+      adrDir = readConfig(root).adrDir;
+    } catch {
+      // Unreadable config: fall back to the default rather than fail the scaffold.
+    }
+  }
+
   const results: ScaffoldResult[] = [
     writeIfAbsent(at(CONFIG_FILE), DEFAULT_CONFIG),
-    writeIfAbsent(at(join(DEFAULT_ADR_DIR, "TEMPLATE.md")), packagedTemplate()),
+    writeIfAbsent(at(join(adrDir, "TEMPLATE.md")), packagedTemplate()),
   ];
   if (options.claude) results.push(registerClaudeHook(at(CLAUDE_SETTINGS)));
   if (options.ci) results.push(writeIfAbsent(at(WORKFLOW_PATH), GITHUB_WORKFLOW));

@@ -18,13 +18,15 @@ const pkg = JSON.parse(
  * v0.0.1 reserves the name and publishes the command surface.
  * The tracer bullet (CLI spec §§5–9) lands in v0.1.0.
  */
-const NOT_YET = (command: string): void => {
-  process.stderr.write(
-    `${PRODUCT_NAME}: \`${command}\` is not implemented in v${pkg.version}.\n` +
-      `This release reserves the name and publishes the command surface.\n` +
-      `The tracer bullet — init, new, check, hook — lands in v0.1.0.\n`,
-  );
-  process.exit(2);
+/**
+ * Never call process.exit() when something has been written to stdout.
+ * process.exit() tears the process down without draining a piped write, so
+ * output is cut at the OS pipe buffer — 64KB on Linux — and the consumer gets
+ * a truncated document. Setting exitCode lets Node flush and exit naturally.
+ */
+const fail = (message: string, code = 2): void => {
+  process.stderr.write(`${PRODUCT_NAME}: ${message}\n`);
+  process.exitCode = code;
 };
 
 const program = new Command();
@@ -53,8 +55,7 @@ program
     try {
       process.stdout.write(report(init({ ...options, cwd }), cwd) + "\n");
     } catch (error) {
-      process.stderr.write(`${PRODUCT_NAME}: ${(error as Error).message}\n`);
-      process.exit(2);
+      fail((error as Error).message);
     }
   });
 
@@ -64,13 +65,13 @@ program
   .description("create the next ADR from the template")
   .option("--class <n>", "enforcement class 1-4 (default 4 — unconsidered is unenforced)")
   .option("--symbols <list>", "comma-separated content-match terms")
-  .action((title: string, options: { class?: string; symbols?: string }) => {
+  .option("--endpoints <list>", "comma-separated API routes, matched on resource segments")
+  .action((title: string, options: { class?: string; symbols?: string; endpoints?: string }) => {
     const cwd = process.cwd();
     try {
       process.stdout.write(reportNew(newAdr(title, { ...options, cwd }), cwd) + "\n");
     } catch (error) {
-      process.stderr.write(`${PRODUCT_NAME}: ${(error as Error).message}\n`);
-      process.exit(2);
+      fail((error as Error).message);
     }
   });
 
@@ -82,10 +83,9 @@ program
     try {
       const report = check(process.cwd());
       process.stdout.write((options.json ? asJson(report) : asTable(report)) + "\n");
-      process.exit(report.ok ? 0 : 1);
+      process.exitCode = report.ok ? 0 : 1;
     } catch (error) {
-      process.stderr.write(`${PRODUCT_NAME}: ${(error as Error).message}\n`);
-      process.exit(2);
+      fail((error as Error).message);
     }
   });
 
@@ -97,7 +97,7 @@ program
     // developer's edit loop; a hook that errors takes their session with it,
     // and a governance tool people disable has enforced nothing.
     try {
-      if (process.stdin.isTTY) process.exit(0);
+      if (process.stdin.isTTY) return;
       const chunks: Buffer[] = [];
       for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
       const event = JSON.parse(Buffer.concat(chunks).toString("utf8")) as HookEvent;
@@ -106,7 +106,9 @@ program
     } catch {
       // Intentionally silent.
     }
-    process.exit(0);
+    // No process.exit(): it would truncate the write above at the pipe buffer,
+    // handing the host unparseable JSON — the exact opposite of "never break
+    // the edit loop". Falling off the end exits 0 once stdout has drained.
   });
 
 program.parse();

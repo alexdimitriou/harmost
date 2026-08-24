@@ -47,10 +47,24 @@ export function editedText(toolInput: unknown): string {
 const wholeWord = (term: string): RegExp =>
   new RegExp(`(?<![\\w$])${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w$])`);
 
-/** Endpoints are matched on their resource segment: prefixes differ between
- *  clients (`/Assets/findOne` vs `/api/v1/Assets/...`) but the resource does not. */
-const endpointNeedles = (endpoint: string): string[] =>
-  endpoint.split("/").filter((segment) => segment.length > 0 && !segment.startsWith("{"));
+/** Mount-point noise. Stripped from the ledger's route so a rule reaches a
+ *  client whichever side carries the prefix — the swagger-generated list is
+ *  full backend paths, while clients often write the bare resource. */
+const MOUNT_SEGMENT = /^(api|rest|public|internal|v\d+)$/i;
+
+/** Endpoints are matched on their resource segments: prefixes differ between
+ *  clients (`/Assets/findOne` vs `/api/v1/Assets/findOne`) but the resource
+ *  does not. Path parameters are skipped — `{id}` names nothing in the code. */
+export const endpointNeedles = (endpoint: string): string[] => {
+  const segments = endpoint
+    .split("/")
+    .filter((segment) => segment.length > 0 && !segment.startsWith("{") && !segment.startsWith(":"));
+  let start = 0;
+  while (start < segments.length && MOUNT_SEGMENT.test(segments[start]!)) start += 1;
+  // Keep at least the last segment: a route that is nothing but mount points
+  // has no resource to match on, and must not become a wildcard.
+  return start >= segments.length ? [] : segments.slice(start);
+};
 
 export interface Match {
   record: AdrRecord;
@@ -68,7 +82,10 @@ export function matchAdrs(text: string, records: AdrRecord[], cap: number): Matc
       if (symbol.length > 0 && wholeWord(symbol).test(text)) hits += 1;
     }
     for (const endpoint of record.endpoints) {
-      if (endpointNeedles(endpoint).every((n) => wholeWord(n).test(text))) hits += 1;
+      const needles = endpointNeedles(endpoint);
+      // `[].every()` is vacuously true: without this guard a degenerate route
+      // such as "/" or "/api/v1" would match every edit ever made.
+      if (needles.length > 0 && needles.every((n) => wholeWord(n).test(text))) hits += 1;
     }
     if (hits > 0) matches.push({ record, hits });
   }
@@ -80,10 +97,26 @@ export function matchAdrs(text: string, records: AdrRecord[], cap: number): Matc
 }
 
 export function renderContext(matches: Match[]): string {
+  const ratified = matches.filter((m) => m.record.status === "accepted").length;
+  const draft = matches.length - ratified;
+
   const header =
     matches.length === 1
-      ? "1 architectural decision governs the code you are editing."
-      : `${matches.length} architectural decisions govern the code you are editing.`;
+      ? "1 architectural decision covers the code you are editing."
+      : `${matches.length} architectural decisions cover the code you are editing.`;
+
+  // Say which are binding. Telling an agent a draft "is enforced by the merge
+  // gate" is false — `check` deliberately does not gate proposed ADRs — and a
+  // delivery mechanism that misstates authority teaches the agent to discount it.
+  const authority: string[] = [];
+  if (ratified > 0) {
+    authority.push(
+      `${ratified} ratified — the merge gate enforces ${ratified === 1 ? "it" : "them"}. Read before you write.`,
+    );
+  }
+  if (draft > 0) {
+    authority.push(`${draft} still proposed — not yet ratified, and not yet enforced. Treat as a warning.`);
+  }
 
   const bodies = matches.map(({ record }) => {
     let source: string;
@@ -92,15 +125,11 @@ export function renderContext(matches: Match[]): string {
     } catch {
       source = `${record.id}: ${record.invariant}`;
     }
-    return `--- ${record.id} (${record.file}) ---\n${source.trim()}`;
+    const label = record.status === "accepted" ? "RATIFIED" : String(record.status).toUpperCase();
+    return `--- ${record.id} [${label}] (${record.file}) ---\n${source.trim()}`;
   });
 
-  return [
-    header,
-    "They were ratified, and the merge gate enforces them. Read them before you write.",
-    "",
-    ...bodies,
-  ].join("\n");
+  return [header, ...authority, "", ...bodies].join("\n");
 }
 
 export interface HookEvent {
@@ -120,6 +149,10 @@ export function hookResponse(event: HookEvent, cwd: string): string | null {
   const text = editedText(event.tool_input);
   if (text.length === 0) return null;
 
+  // Parse errors are dropped rather than surfaced: this process must never
+  // break the edit loop. A malformed ADR silently stops being delivered, which
+  // is safe only because `check` fails the build on the same file — the gate is
+  // what makes the hook's silence recoverable.
   const { records } = loadLedger(join(cwd, config.adrDir));
   // Checked here, where bailing still saves the matching and rendering work.
   // Best-effort only: by definition it cannot bound work already done, so the

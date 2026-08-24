@@ -90,12 +90,12 @@ test("says nothing for a tool that is not configured", () => {
 
 test("Q2 — endpoints match on the resource segment across differing prefixes", () => {
   const cwd = repo();
-  const { path } = newAdr("Asset reads are tenant-scoped", { class: "2", symbols: "assertTenant", cwd });
-  writeFileSync(
-    path,
-    readFileSync(path, "utf8").replace("applies-to:", 'endpoints:\n  - "/Assets/findOne"\napplies-to:'),
-    "utf8",
-  );
+  const { path } = newAdr("Asset reads are tenant-scoped", {
+    class: "2",
+    symbols: "assertTenant",
+    endpoints: "/Assets/findOne",
+    cwd,
+  });
   accept(path);
   // mobile's vocabulary, not the backend's — no shared identifier, shared route.
   const out = hookResponse(

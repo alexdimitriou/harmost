@@ -17,6 +17,7 @@ import {
 export interface NewOptions {
   class?: string;
   symbols?: string;
+  endpoints?: string;
   cwd?: string;
   today?: string;
 }
@@ -51,6 +52,7 @@ export function newAdr(title: string, options: NewOptions = {}): NewResult {
     title: title.trim(),
     enforcementClass,
     symbols: parseSymbols(options.symbols),
+    endpoints: parseSymbols(options.endpoints),
     date: options.today ?? new Date().toISOString().slice(0, 10),
   };
   const content = `${renderFrontmatter(seed)}\n\n${bodyOfTemplate(template(root, config.adrDir))}`;

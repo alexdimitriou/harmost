@@ -50,6 +50,7 @@ export interface AdrSeed {
   title: string;
   enforcementClass: 1 | 2 | 3 | 4;
   symbols: string[];
+  endpoints?: string[];
   date: string;
 }
 
@@ -73,6 +74,11 @@ applies-to:
   - "src/**"
 symbols:
 ${symbols}
+endpoints:${
+    (seed.endpoints ?? []).length > 0
+      ? `\n${(seed.endpoints ?? []).map((e) => `  - ${yamlString(e)}`).join("\n")}`
+      : " []                # optional API routes, matched on resource segments"
+  }
 enforced-by: []
 supersedes: null
 justification: null
