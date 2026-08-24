@@ -31,7 +31,7 @@ const accept = (path: string, artifacts?: string) => {
 };
 const LINT_OK = "enforced-by:\n  - type: lint\n    file: harmost.yaml";
 
-test("F1 — a large hook payload is not truncated at the pipe buffer", () => {
+test("F1 — the injected payload is bounded by the ADR's rule, not its length", () => {
   const cwd = sandbox();
   const { path } = newAdr("Big rule", { class: "3", symbols: "create_session", cwd });
   accept(path, LINT_OK);
@@ -39,8 +39,18 @@ test("F1 — a large hook payload is not truncated at the pipe buffer", () => {
 
   const result = run(cwd, ["hook"], JSON.stringify({ tool_name: "Edit", tool_input: { new_string: "create_session(u)" } }));
   assert.equal(result.status, 0);
-  assert.ok(result.stdout.length > 65_536, `only ${result.stdout.length} bytes emitted`);
   assert.doesNotThrow(() => JSON.parse(result.stdout), "the host must receive parseable JSON");
+  // Originally this asserted the OPPOSITE — that a 300KB ADR produced >64KB of
+  // stdout — to prove `process.exit()` was not truncating at the pipe buffer.
+  // The hook now injects the rule rather than the file, so a payload that large
+  // is unreachable by construction and the assertion cannot be kept. The
+  // underlying truncation defect is still covered, on a path that CAN still
+  // exceed the buffer: F2, `check --json` over 400 ADRs.
+  assert.ok(result.stdout.length < 16_384, `${result.stdout.length} bytes — an agent pays this on every matching edit`);
+  // Symbols are deliberately NOT injected: they are the match key, and the edit
+  // the agent is making already contains them. What must arrive is the rule.
+  assert.match(result.stdout, /ADR-001/);
+  assert.match(result.stdout, /INVARIANT/, "the rule itself must still arrive");
 });
 
 test("F2 — check --json is not truncated at the pipe buffer", () => {
@@ -98,7 +108,7 @@ test("F7 — proposed ADRs are not described to the agent as ratified", () => {
   const out = hookResponse({ tool_name: "Edit", tool_input: { new_string: "draft_symbol()" } }, cwd);
   const context = JSON.parse(out!).hookSpecificOutput.additionalContext as string;
   assert.match(context, /still proposed/);
-  assert.match(context, /\[PROPOSED\]/);
+  assert.match(context, /\[PROPOSED · class 2\]/);
   assert.doesNotMatch(context, /the merge gate enforces/);
 });
 

@@ -2,7 +2,7 @@ import { readConfig } from "./config-read.js";
 import { endpointNeedles } from "./adr.js";
 
 export { endpointNeedles };
-import { loadLedger, type AdrRecord } from "./ledger.js";
+import { loadLedger, THIS_REPO, type AdrRecord } from "./ledger.js";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -68,6 +68,9 @@ export interface Match {
  * direction to be wrong in — the merge gate still holds.
  */
 const MAX_SCANNED_CHARS = 256 * 1024;
+
+/** Per-ADR ceiling on injected body text. See `decisionSection`. */
+const MAX_BODY_CHARS = 2_000;
 
 /** Maximal runs of word characters — the same class `wholeWord` uses for its
  *  boundaries, which is what makes the set lookup below exact rather than an
@@ -141,6 +144,59 @@ export function matchAdrs(text: string, records: AdrRecord[], cap: number): Matc
   return matches.slice(0, cap);
 }
 
+/**
+ * The operative part of an ADR body.
+ *
+ * The hook used to inject the whole file. On a real ledger that was 8.2KB for a
+ * single decision — and most of it was Context and Dial-backs, which is why the
+ * decision was made. An agent about to write a line of code needs the rule and
+ * what it must do; the reasoning is for the human reviewing the ADR. Injecting
+ * the essay spends the agent's context on prose that cannot change the edit,
+ * and it does so on EVERY matching edit.
+ *
+ * Headings inside fenced code blocks are ignored — an ADR that shows a markdown
+ * example would otherwise truncate itself at the fence.
+ */
+export function decisionSection(source: string, limit = MAX_BODY_CHARS): string | null {
+  const lines = source.split("\n");
+  let fenced = false;
+  let depth = 0;
+  const body: string[] = [];
+
+  for (const line of lines) {
+    if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
+    const heading = fenced ? null : /^(#{1,6})\s+(.*)$/.exec(line);
+
+    if (depth === 0) {
+      if (heading && /^decision\b/i.test(heading[2]!.trim())) depth = heading[1]!.length;
+      continue;
+    }
+    // Any heading at the same level or shallower ends the section.
+    if (heading && heading[1]!.length <= depth) break;
+    body.push(line);
+  }
+
+  if (depth === 0) return null;
+  const text = body.join("\n").trim();
+  if (text.length === 0) return null;
+  // Bounded by construction. Without this an ADR with a very long Decision puts
+  // the injection straight back where it was, and "keep ADRs short" is a
+  // convention, not a mechanism.
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit).trimEnd()}\n[truncated — read the full decision in the file named above]`;
+}
+
+const artifactLine = (record: AdrRecord): string | null => {
+  const parts: string[] = [];
+  for (const [repo, artifacts] of Object.entries(record.enforcedBy)) {
+    for (const artifact of artifacts) {
+      const where = repo === THIS_REPO ? artifact.file : `${repo}:${artifact.file}`;
+      parts.push(artifact.name ? `${where} (${artifact.name})` : where);
+    }
+  }
+  return parts.length > 0 ? parts.join(", ") : null;
+};
+
 export function renderContext(matches: Match[]): string {
   const ratified = matches.filter((m) => m.record.status === "accepted").length;
   const draft = matches.length - ratified;
@@ -164,14 +220,25 @@ export function renderContext(matches: Match[]): string {
   }
 
   const bodies = matches.map(({ record }) => {
-    let source: string;
-    try {
-      source = readFileSync(record.path, "utf8");
-    } catch {
-      source = `${record.id}: ${record.invariant}`;
-    }
     const label = record.status === "accepted" ? "RATIFIED" : String(record.status).toUpperCase();
-    return `--- ${record.id} [${label}] (${record.file}) ---\n${source.trim()}`;
+    const lines = [`--- ${record.id} [${label} · class ${record.enforcementClass}] (${record.file}) ---`];
+    if (record.title) lines.push(record.title);
+    if (record.invariant) lines.push("", "INVARIANT", record.invariant);
+
+    let decision: string | null = null;
+    try {
+      decision = decisionSection(readFileSync(record.path, "utf8"));
+    } catch {
+      // Unreadable between load and render. The frontmatter above is already
+      // parsed and still states the rule, so say less rather than nothing.
+      decision = null;
+    }
+    if (decision) lines.push("", "DECISION", decision);
+
+    const artifacts = artifactLine(record);
+    if (artifacts) lines.push("", `ENFORCED BY  ${artifacts}`);
+    lines.push(`FULL TEXT    ${record.file}`);
+    return lines.join("\n");
   });
 
   return [header, ...authority, "", ...bodies].join("\n");

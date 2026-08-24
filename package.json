@@ -1,6 +1,6 @@
 {
   "name": "harmost",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "Make architectural invariants enforceable in AI-assisted development: an ADR ledger in git, a coverage gate in CI, and deterministic context delivery to coding agents.",
   "keywords": [
     "adr",

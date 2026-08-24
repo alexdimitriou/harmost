@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { init, report } from "./init.js";
 import { newAdr } from "./new.js";
 import { check } from "./check.js";
-import { hookResponse } from "./hook.js";
+import { hookResponse, decisionSection } from "./hook.js";
 import { nextId, endpointNeedles } from "./adr.js";
 import { readConfig } from "./config-read.js";
 import { mergeHookRegistration } from "./claude-settings.js";
@@ -391,4 +391,62 @@ test("R26 — an un-ignore rule is not read as an ignore rule", () => {
   // travels perfectly well — and tells the user to fix what they just fixed.
   assert.equal(settings.ignoredBy, undefined, "a `!` pattern means the path is NOT ignored");
   assert.doesNotMatch(report(results, cwd), /WARNING — git ignores/);
+});
+
+test("R27 — the hook injects the rule, not the essay", () => {
+  const cwd = sandbox();
+  const { path } = newAdr("Bounded", { class: "4", symbols: "widget_token", cwd });
+  const essay = [
+    "## Context", "x".repeat(20_000), "",
+    "## Decision", "Never mint a widget token for a deactivated user.", "",
+    "## Enforcement", "y".repeat(20_000), "",
+    "## Dial-backs", "z".repeat(20_000),
+  ].join("\n");
+  writeFileSync(path, readFileSync(path, "utf8").split("## Context")[0] + essay, "utf8");
+
+  const out = hookResponse({ tool_name: "Edit", tool_input: { new_string: "widget_token()" } }, cwd);
+  const ctx = JSON.parse(out!).hookSpecificOutput.additionalContext as string;
+  assert.match(ctx, /Never mint a widget token/, "the Decision is what the agent needs");
+  // Context / Enforcement / Dial-backs are why the decision was made — for the
+  // human reviewing the ADR, not for the agent about to write one line of code.
+  assert.doesNotMatch(ctx, /x{100}/, "Context must not be injected");
+  assert.doesNotMatch(ctx, /y{100}/, "Enforcement prose must not be injected");
+  assert.doesNotMatch(ctx, /z{100}/, "Dial-backs must not be injected");
+  assert.match(ctx, /FULL TEXT/, "the agent must be told where the rest is");
+});
+
+test("R28 — a long Decision is capped, and says so", () => {
+  const long = ["## Decision", "d".repeat(50_000)].join("\n");
+  const section = decisionSection(long);
+  assert.ok(section !== null);
+  assert.ok(section!.length < 2_200, `${section!.length} chars — the cap is what makes this structural`);
+  assert.match(section!, /truncated/, "silent truncation would hide the rule's tail");
+});
+
+test("R29 — a heading inside a fenced block does not end the section", () => {
+  const source = [
+    "## Decision",
+    "Use the template below.",
+    "```markdown",
+    "## Context",
+    "not a real heading",
+    "```",
+    "Still the decision.",
+    "",
+    "## Dial-backs",
+    "not the decision",
+  ].join("\n");
+  const section = decisionSection(source)!;
+  assert.match(section, /Still the decision/, "the fence must not truncate the section early");
+  assert.doesNotMatch(section, /not the decision/, "the real heading must still end it");
+});
+
+test("R30 — an ADR with no Decision section still delivers its rule", () => {
+  const cwd = sandbox();
+  const { path } = newAdr("No decision heading", { class: "4", symbols: "orphan_sym", cwd });
+  const src = readFileSync(path, "utf8");
+  writeFileSync(path, src.slice(0, src.indexOf("## Decision")), "utf8");
+  const out = hookResponse({ tool_name: "Edit", tool_input: { new_string: "orphan_sym()" } }, cwd);
+  assert.notEqual(out, null, "a missing optional section must not silence delivery");
+  assert.match(JSON.parse(out!).hookSpecificOutput.additionalContext, /INVARIANT/);
 });
