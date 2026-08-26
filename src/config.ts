@@ -3,7 +3,21 @@ import { CONFIG_FILE, DEFAULT_ADR_DIR, PRODUCT_NAME } from "./name.js";
 /** Tools whose edits the hook inspects. Verified against the Claude Code hook docs. */
 export const HOOK_TOOLS = ["Edit", "Write", "MultiEdit"] as const;
 
-/** Cap on ADRs injected per hook event, so context delivery stays bounded. */
+/**
+ * Total characters of decision text injected per hook event.
+ *
+ * Bytes rather than a count, because bytes are the resource. A count cap has to
+ * choose which decisions to drop, and only matched ones can be ranked — a cited
+ * decision has no order but the one its author typed, so capping that list is
+ * arbitrary truncation wearing policy's clothes.
+ *
+ * Roughly nine decisions at the per-Decision cap. Generous on purpose: whatever
+ * this number is, exceeding it now says so rather than quietly reporting fewer
+ * rules than cover the edit.
+ */
+export const MAX_INJECTED_CHARS = 12000;
+
+/** Legacy count cap. Unset by default now; the byte budget is the real bound. */
 export const MAX_INJECTED_ADRS = 3;
 
 /**
@@ -32,11 +46,14 @@ test_globs:
 hook:
   # Agent tools whose edited text is matched against ADR symbols.
   tools: [${HOOK_TOOLS.join(", ")}]
-  # Most-specific-first; anything beyond this cap is not injected.
-  max_injected_adrs: ${MAX_INJECTED_ADRS}
-  # Decisions cited by a matched one. Separate budget, and followed one step
-  # only: a citation of a citation is two removes from the code on screen.
-  max_injected_citations: ${MAX_INJECTED_CITATIONS}
+  # The bound on delivery is the total size of what is injected, not how many
+  # decisions it is. Anything that does not fit is named rather than dropped in
+  # silence, so an agent is never told fewer rules cover its edit than do.
+  max_injected_chars: ${MAX_INJECTED_CHARS}
+  # Optional count caps. Unset means every decision that matches, and every one
+  # they cite, subject to the budget above.
+  # max_injected_adrs: ${MAX_INJECTED_ADRS}
+  # max_injected_citations: ${MAX_INJECTED_CITATIONS}
 `;
 
 export const CONFIG_PATH = CONFIG_FILE;

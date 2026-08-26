@@ -7,7 +7,13 @@ export interface Config {
   version: number;
   adrDir: string;
   testGlobs: string[];
-  hook: { tools: string[]; maxInjectedAdrs: number; maxInjectedCitations: number };
+  hook: {
+    tools: string[];
+    /** Infinity when unset: the byte budget is the bound, not a count. */
+    maxInjectedAdrs: number;
+    maxInjectedCitations: number;
+    maxInjectedChars: number;
+  };
   /** The name this repo is known by in the ledger, when the ledger names repos. */
   repo?: string;
 }
@@ -26,7 +32,12 @@ interface RawConfig {
   adr_dir?: string;
   test_globs?: string[];
   repo?: string;
-  hook?: { tools?: string[]; max_injected_adrs?: number; max_injected_citations?: number };
+  hook?: {
+    tools?: string[];
+    max_injected_adrs?: number;
+    max_injected_citations?: number;
+    max_injected_chars?: number;
+  };
 }
 
 /** Read the host repo's config. Defaults fill anything absent — a config that
@@ -57,8 +68,12 @@ export function readConfig(root: string): Config {
     testGlobs: raw.test_globs ?? ["tests/**", "**/*.test.*", "**/*.spec.*"],
     hook: {
       tools: raw.hook?.tools ?? ["Edit", "Write", "MultiEdit"],
-      maxInjectedAdrs: raw.hook?.max_injected_adrs ?? 3,
-      maxInjectedCitations: raw.hook?.max_injected_citations ?? 2,
+      // Absent means unlimited; an explicit 0 means none. Reading 0 as
+      // "unlimited" would invert the meaning for anyone who set it to switch
+      // delivery off, which is the opposite of what they asked for.
+      maxInjectedAdrs: raw.hook?.max_injected_adrs ?? Infinity,
+      maxInjectedCitations: raw.hook?.max_injected_citations ?? Infinity,
+      maxInjectedChars: raw.hook?.max_injected_chars ?? 12000,
     },
     repo: raw.repo,
   };

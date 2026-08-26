@@ -139,10 +139,23 @@ rather than living in whoever read the file. Two bounds, both structural:
   the rule; a cited one is why that rule has its shape; anything past that is two
   removes from the code on screen, and following the graph is how the whole
   ledger arrives.
-- **A separate budget.** `max_injected_citations` is not `max_injected_adrs`.
-  The first selects decisions the *edit* reached; the second selects what another
-  author pointed at. Sharing one budget would let a citation crowd out a rule
-  that matches the code being written.
+- **A byte budget, not a count.** `max_injected_chars` bounds the whole
+  injection. Counts are the wrong bound: dropping the fourth of eight matching
+  decisions requires knowing which matters least, and only matched decisions can
+  be ranked at all — a cited one has no order but the one its author typed.
+
+**Nothing is dropped in silence.** The header states how many decisions cover the
+edit, not how many fit, and anything left out is named:
+
+```
+5 architectural decisions cover the code you are editing.
+
+4 of these are not included below — the injection budget is 1200 characters.
+Read them before you write: ADR-002, ADR-003, ADR-004, ADR-005
+```
+
+Reporting fewer rules than cover an edit is not a smaller answer, it is a false
+one: an agent told three rules apply has no reason to look for a fourth.
 
 This is what makes an upstream rule more than a link. A tool's own governance
 decisions — how an ADR is amended, what an accepted one must carry — are rules

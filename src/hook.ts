@@ -1,4 +1,5 @@
 import { readConfig } from "./config-read.js";
+import { MAX_INJECTED_CHARS } from "./config.js";
 import { endpointNeedles } from "./adr.js";
 
 export { endpointNeedles };
@@ -249,7 +250,11 @@ const artifactLine = (record: AdrRecord): string | null => {
   return parts.length > 0 ? parts.join(", ") : null;
 };
 
-export function renderContext(matches: Match[], citations: Match[] = []): string {
+export function renderContext(
+  matches: Match[],
+  citations: Match[] = [],
+  budget = MAX_INJECTED_CHARS,
+): string {
   const ratified = matches.filter((m) => m.record.status === "accepted").length;
   const draft = matches.length - ratified;
 
@@ -302,8 +307,46 @@ export function renderContext(matches: Match[], citations: Match[] = []): string
     return lines.join("\n");
   };
 
-  const bodies = [...matches.map(renderRecord), ...citations.map(renderRecord)];
-  return [header, ...authority, "", ...bodies].join("\n");
+  // Matched decisions first, in rank order, then what they cite. The budget is
+  // spent in that order and stops at the first body that will not fit: bodies
+  // are near-uniform because each Decision is already capped, so skipping ahead
+  // to whichever happens to be smaller would trade relevance for packing.
+  const bodies: string[] = [];
+  const omitted: Match[] = [];
+  let spent = 0;
+  let full = false;
+  for (const match of [...matches, ...citations]) {
+    if (full) {
+      omitted.push(match);
+      continue;
+    }
+    const body = renderRecord(match);
+    // Always deliver one. A header announcing rules with no rule under it is
+    // worse than a long injection.
+    if (bodies.length > 0 && spent + body.length > budget) {
+      full = true;
+      omitted.push(match);
+      continue;
+    }
+    bodies.push(body);
+    spent += body.length;
+  }
+
+  const notice: string[] = [];
+  if (omitted.length > 0) {
+    // Never drop a rule in silence. Reporting fewer decisions than cover an
+    // edit is not a smaller answer, it is a false one — an agent told three
+    // rules apply has no reason to look for the fourth.
+    const named = omitted.slice(0, 10).map((m) => m.record.id).join(", ");
+    const rest = omitted.length > 10 ? `, and ${omitted.length - 10} more` : "";
+    notice.push(
+      "",
+      `${omitted.length} of these ${omitted.length === 1 ? "is" : "are"} not included below — the injection budget is ${budget} characters.`,
+      `Read ${omitted.length === 1 ? "it" : "them"} before you write: ${named}${rest}`,
+    );
+  }
+
+  return [header, ...authority, ...notice, "", ...bodies].join("\n");
 }
 
 export interface HookEvent {
@@ -335,7 +378,7 @@ export function hookResponse(event: HookEvent, cwd: string): string | null {
   return JSON.stringify({
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
-      additionalContext: renderContext(matches, citations),
+      additionalContext: renderContext(matches, citations, config.hook.maxInjectedChars),
     },
   });
 }
