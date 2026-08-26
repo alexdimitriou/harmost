@@ -8,6 +8,9 @@ import { init, report } from "./init.js";
 import { newAdr, reportNew } from "./new.js";
 import { check } from "./check.js";
 import { verify, asVerifyJson, asVerifyTable } from "./verify.js";
+import { writeLock, LOCK_FILE } from "./lock.js";
+import { loadLedger } from "./ledger.js";
+import { readConfig } from "./config-read.js";
 import { asJson, asTable } from "./report-check.js";
 import { hookResponse, type HookEvent } from "./hook.js";
 
@@ -85,6 +88,31 @@ program
       const report = check(process.cwd());
       process.stdout.write((options.json ? asJson(report) : asTable(report)) + "\n");
       process.exitCode = report.ok ? 0 : 1;
+    } catch (error) {
+      fail((error as Error).message);
+    }
+  });
+
+program
+  .command("ratify")
+  .description(`record what is ratified in ${LOCK_FILE} — a human act, not a build step`)
+  .action(() => {
+    try {
+      const cwd = process.cwd();
+      const config = readConfig(cwd);
+      const { records } = loadLedger(join(cwd, config.adrDir));
+      const lock = writeLock(cwd, records);
+      const count = Object.keys(lock.adrs).length;
+      process.stdout.write(
+        [
+          `  wrote    ${LOCK_FILE}  (${count} decision${count === 1 ? "" : "s"})`,
+          "",
+          "From here the gate fails when a decision is weakened without this file",
+          "changing to match: a status moved backwards, a class dropped, a Decision",
+          "reworded. That is a record until the path is owned — put it behind review",
+          "(CODEOWNERS) and it becomes a control.",
+        ].join("\n") + "\n",
+      );
     } catch (error) {
       fail((error as Error).message);
     }

@@ -1,4 +1,5 @@
 import { INVOCATION, PRODUCT_NAME } from "./name.js";
+import { LOCK_FILE } from "./lock.js";
 import type { CheckReport, AdrResult } from "./check.js";
 
 /**
@@ -12,6 +13,7 @@ export function asJson(report: CheckReport): string {
       version: 1,
       tool: PRODUCT_NAME,
       ok: report.ok,
+      lock: report.lockState,
       summary: report.summary,
       adrs: report.results.map((r) => ({
         id: r.id,
@@ -97,6 +99,15 @@ export function asTable(report: CheckReport): string {
       `${unverified} ADR${unverified === 1 ? "" : "s"} declare enforcement in repos this gate cannot see.`,
       "They are reported, not passed — a green gate over an unenforced repo is the",
       "same failure one level up.",
+    );
+  }
+  if (report.lockState === "absent") {
+    lines.push(
+      "",
+      `Ratification is unguarded: there is no ${LOCK_FILE}.`,
+      "Nothing here notices a decision moved back to `proposed`, demoted to class 4,",
+      "or quietly reworded — and un-ratifying does not even raise the count above.",
+      `Run \`${INVOCATION} ratify\`, then own that path so changing it needs review.`,
     );
   }
   if (!report.ok) {

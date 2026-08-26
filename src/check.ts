@@ -7,6 +7,7 @@ import { loadLedger, STATUSES, THIS_REPO, isRuleArtifact, type AdrRecord, type A
 import { containsTerm } from "./match.js";
 import { decisionSection } from "./hook.js";
 import { parseRef, resolveRef, upstreamLedgerDir } from "./refs.js";
+import { readLock, weakenings, LOCK_FILE } from "./lock.js";
 import { INVOCATION } from "./name.js";
 
 export type Verdict = "pass" | "fail" | "unverified";
@@ -33,10 +34,14 @@ export interface CheckSummary {
   unverified: number;
 }
 
+/** Whether ratification is guarded, and by what. */
+export type LockState = "guarded" | "absent" | "unreadable";
+
 export interface CheckReport {
   results: AdrResult[];
   summary: CheckSummary;
   ok: boolean;
+  lockState: LockState;
 }
 
 /** Whole-word match, so `test_login` does not satisfy a claim about `login`. */
@@ -345,5 +350,51 @@ export function check(cwd: string): CheckReport {
     unverified: results.filter((r) => r.verdict === "unverified").length,
   };
 
-  return { results, summary, ok: results.every((r) => r.verdict !== "fail") };
+  // Weakening is checked last and reported against the ADR it weakens, so a
+  // demotion reads as a failure of that decision rather than of the ledger.
+  const lock = readLock(cwd);
+  let lockState: LockState = "absent";
+  if (lock !== null) {
+    lockState = lock.version === 0 ? "unreadable" : "guarded";
+    const byId = new Map(results.map((r) => [r.id, r]));
+    for (const weakening of weakenings(lock, records)) {
+      const target = byId.get(weakening.id);
+      if (target !== undefined) {
+        target.failures.push(weakening.message);
+        target.verdict = "fail";
+      } else {
+        results.push({
+          id: weakening.id,
+          status: "ratified, absent",
+          class: null,
+          verdict: "fail",
+          file: weakening.id,
+          failures: [weakening.message],
+          declared: [],
+          unenforced: false,
+          unverifiedRepos: [],
+        });
+      }
+    }
+    if (lockState === "unreadable") {
+      results.push({
+        id: LOCK_FILE,
+        status: "unreadable",
+        class: null,
+        verdict: "fail",
+        file: LOCK_FILE,
+        failures: ["the lock does not parse — it cannot say what was ratified"],
+        declared: [],
+        unenforced: false,
+        unverifiedRepos: [],
+      });
+    }
+  }
+
+  return {
+    results,
+    summary,
+    ok: results.every((r) => r.verdict !== "fail"),
+    lockState,
+  };
 }

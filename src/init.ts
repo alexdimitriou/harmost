@@ -7,7 +7,7 @@ import { readConfig } from "./config-read.js";
 import { DEFAULT_CONFIG } from "./config.js";
 import { writeIfAbsent, type ScaffoldResult } from "./scaffold.js";
 import { mergeHookRegistration, type ClaudeSettings } from "./claude-settings.js";
-import { GITHUB_WORKFLOW, WORKFLOW_PATH } from "./ci-github.js";
+import { GITHUB_WORKFLOW, WORKFLOW_PATH, CODEOWNERS_PATH, codeowners } from "./ci-github.js";
 
 export interface InitOptions {
   claude?: boolean;
@@ -143,7 +143,10 @@ export function init(options: InitOptions = {}): ScaffoldResult[] {
     writeIfAbsent(at(join(adrDir, "TEMPLATE.md")), packagedTemplate()),
   ];
   if (options.claude) results.push(registerClaudeHook(at(CLAUDE_SETTINGS), tools));
-  if (options.ci) results.push(writeIfAbsent(at(WORKFLOW_PATH), GITHUB_WORKFLOW));
+  if (options.ci) {
+    results.push(writeIfAbsent(at(WORKFLOW_PATH), GITHUB_WORKFLOW));
+    results.push(writeIfAbsent(at(CODEOWNERS_PATH), codeowners(adrDir)));
+  }
 
   const landed = results.filter((r) => r.outcome !== "refused");
   const ignored = ignoredPaths(root, landed.map((r) => r.path));
@@ -193,6 +196,7 @@ export function report(results: ScaffoldResult[], root: string): string {
       "Next:",
       `  ${INVOCATION} new "<the rule, in one sentence>" --class 2 --symbols <identifiers>`,
       `  ${INVOCATION} check`,
+      `  ${INVOCATION} ratify        # record what is ratified, so weakening it is visible`,
     );
   }
   return lines.join("\n");

@@ -87,7 +87,11 @@ function verdictFor(
     return {
       kind: String(artifact.type ?? "artifact"),
       state: "declared" as RuleState,
-      detail: `${artifact.file ?? "artifact"} — nothing here runs it; give this ADR a built-in rule, or hold it at class 4 with a written justification`,
+      // Deliberately not offering the demotion here. This text lands in an
+      // agent's context, and "hold it at class 4" is an instruction to make the
+      // gate green by claiming less — which is the one move that must stay the
+      // architect's.
+      detail: `${artifact.file ?? "artifact"} — nothing here runs it; this ADR needs a built-in rule to be enforced. Changing its class is the architect's call, not this run's`,
       violations: [],
     };
   });
@@ -197,8 +201,9 @@ export function asVerifyTable(report: VerifyReport): string {
       "",
       `${inert} accepted ADR${inert === 1 ? " has" : "s have"} nothing this gate can evaluate.`,
       "That is the hole the gate exists to find: not a rule broken, but a rule",
-      "nobody ever checked. Give it a built-in rule, or hold it at class 4 with",
-      "a written justification — but it is exposure until then.",
+      "nobody ever checked. Give it a built-in rule, or implement what it asks",
+      "for. Lowering its class or un-ratifying it is the architect's call, made",
+      "deliberately and recorded — never a way to turn this run green.",
     );
   }
   if (!report.ok) lines.push("", "FAILED");

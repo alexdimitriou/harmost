@@ -1,0 +1,25 @@
+# harmost.lock — what was ratified.
+#
+# Written by `ratify`, which is a human act. The gate fails when a decision
+# in here is weakened without this file changing to match: a status moved
+# backwards, a class dropped, or a Decision edited. Own this path so that
+# updating it needs the architect's approval, or it is a record rather than
+# a control.
+version: 1
+adrs:
+  ADR-001:
+    status: proposed
+    class: 2
+    decision: sha256:11c5c044ef156653a57e4f65c75adb85
+  ADR-002:
+    status: accepted
+    class: 3
+    decision: sha256:58751626f87d3336812e735bfa2b7902
+  ADR-003:
+    status: proposed
+    class: 3
+    decision: sha256:a2525f6fd971abe03187c7b615bf583f
+  ADR-004:
+    status: proposed
+    class: 3
+    decision: sha256:8357f4d4e297f84e6b1d2e8639317d2d

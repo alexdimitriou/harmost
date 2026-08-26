@@ -45,6 +45,39 @@ An ADR is `accepted` only when its enforcement artifact exists and is named in i
 
 Most tools block when they find a violation. `harmost` also blocks when a rule a change touches **has no enforcement behind it at all**. That is the inversion: coverage, not luck.
 
+## Ratification — who may weaken a rule
+
+A gate cannot defend itself. The ledger and this tool's config are files in the
+repository being changed, so any rule its author may edit is not a rule that
+holds against that author. That matters most when the author is an agent asked
+to turn a red gate green: it can demote a decision to class 4 with a paragraph,
+or move it back to `proposed` — and **the second does not raise the class-4
+count**, so the number reported upward as risk stays flat while the rule stops
+being held.
+
+```bash
+npx harmost ratify     # record what is ratified, in harmost.lock
+```
+
+From then on `check` fails when the ledger claims less than what was ratified:
+
+| Change | What the gate says |
+|---|---|
+| `accepted` → `proposed` | a ratified decision is superseded, not un-ratified |
+| class 3 → class 4 | demoting is the architect's call, recorded by `ratify` |
+| the `## Decision` reworded | amend it deliberately and re-ratify, or supersede it |
+| the file deleted | supersede a decision, never delete it |
+| `superseded` with nothing claiming it | set `supersedes:` on the decision that replaces it |
+
+Adding a decision, strengthening one, or superseding one properly are all
+silent. Only weakening speaks.
+
+**`ratify` is the escape hatch, and that is the design.** Weakening is not
+impossible — it is an *act*, in a diff, with a name on it. What makes that act
+need someone else's agreement is ownership of the path: `init --ci github`
+writes a `CODEOWNERS` covering `adr/`, `harmost.lock` and `harmost.yaml`.
+Without an owner the lock is a record; with one it is a control.
+
 ## The operating rule — the ratchet
 
 **Any bug that reaches manual testing merges only alongside its ADR and its enforcement.**
