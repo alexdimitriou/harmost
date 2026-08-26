@@ -34,6 +34,13 @@ export interface AdrVerdict {
 export interface VerifySummary {
   accepted: number;
   enforced: number;
+  /**
+   * Held by a rule that ran green, while also naming an artifact this gate
+   * cannot run. Reported separately because folding it into `enforced` would
+   * overstate the guarantee, and folding it into the gap would punish an ADR
+   * for recording more enforcement than this gate can execute.
+   */
+  partial: number;
   failed: number;
   /** Accepted class-1-3 ADRs with nothing evaluable behind them at all. */
   inert: number;
@@ -130,6 +137,7 @@ export function verify(cwd: string): VerifyReport {
   const summary: VerifySummary = {
     accepted: gated.length,
     enforced: results.filter((r) => r.state === "enforced").length,
+    partial: results.filter((r) => r.state === "partial").length,
     failed: results.filter((r) => r.state === "failed").length,
     inert: results.filter((r) => r.state === "declared").length,
     violations: results.reduce(
@@ -176,10 +184,10 @@ export function asVerifyTable(report: VerifyReport): string {
     for (const artifact of result.artifacts) lines.push(`${" ".repeat(width + 9)}  ${artifact.detail}`);
   }
 
-  const { accepted, enforced, failed, inert, violations } = report.summary;
+  const { accepted, enforced, partial, failed, inert, violations } = report.summary;
   lines.push(
     "",
-    `${accepted} accepted class-1-3 ADR${accepted === 1 ? "" : "s"} · ${enforced} enforced · ${failed} failed · ${inert} inert`,
+    `${accepted} accepted class-1-3 ADR${accepted === 1 ? "" : "s"} · ${enforced} enforced · ${partial} part · ${failed} failed · ${inert} inert`,
     "",
     `VIOLATIONS: ${violations}`,
   );

@@ -193,7 +193,29 @@ test("V10 — `check` reports a rule as declared, never as an unknown type", () 
   assert.match(report.results[0]?.declared[0] ?? "", /choke-point/);
 });
 
-test("V11 — verify gates accepted class 1-3 only", () => {
+test("V11 — a rule that holds is not reported as unenforced because of an artifact beside it", () => {
+  // Otherwise recording a real test next to a green rule makes the ADR read
+  // worse than recording nothing beside it — a metric that punishes candour.
+  const cwd = repo();
+  track(cwd, "src/factory.ts", "export const makeWidget = () => ({})\n");
+  mkdirSync(join(cwd, "tests"), { recursive: true });
+  writeFileSync(join(cwd, "tests", "widget.test.ts"), "test('holds', () => {})\n", "utf8");
+  accepted(
+    cwd,
+    `${CHOKE}
+  - file: "tests/widget.test.ts"
+    type: test
+    name: "holds"`,
+  );
+
+  const report = verify(cwd);
+  assert.equal(report.ok, true);
+  assert.equal(report.summary.partial, 1);
+  assert.equal(report.summary.inert, 0);
+  assert.equal(report.summary.violations, 0);
+});
+
+test("V12 — verify gates accepted class 1-3 only", () => {
   const cwd = repo();
   track(cwd, "src/factory.ts", "export const makeWidget = () => ({})\n");
   // Proposed: not yet a promise.
