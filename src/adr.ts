@@ -90,6 +90,7 @@ endpoints:${
       : " []                # optional API routes, matched on resource segments"
   }
 enforced-by: []
+cites: []                    # \`ADR-002\`, or \`<package>/ADR-004\` in an installed ledger
 supersedes: null
 justification: null
 ---`;

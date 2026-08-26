@@ -7,7 +7,7 @@ export interface Config {
   version: number;
   adrDir: string;
   testGlobs: string[];
-  hook: { tools: string[]; maxInjectedAdrs: number };
+  hook: { tools: string[]; maxInjectedAdrs: number; maxInjectedCitations: number };
   /** The name this repo is known by in the ledger, when the ledger names repos. */
   repo?: string;
 }
@@ -26,7 +26,7 @@ interface RawConfig {
   adr_dir?: string;
   test_globs?: string[];
   repo?: string;
-  hook?: { tools?: string[]; max_injected_adrs?: number };
+  hook?: { tools?: string[]; max_injected_adrs?: number; max_injected_citations?: number };
 }
 
 /** Read the host repo's config. Defaults fill anything absent — a config that
@@ -58,6 +58,7 @@ export function readConfig(root: string): Config {
     hook: {
       tools: raw.hook?.tools ?? ["Edit", "Write", "MultiEdit"],
       maxInjectedAdrs: raw.hook?.max_injected_adrs ?? 3,
+      maxInjectedCitations: raw.hook?.max_injected_citations ?? 2,
     },
     repo: raw.repo,
   };

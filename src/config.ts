@@ -6,6 +6,16 @@ export const HOOK_TOOLS = ["Edit", "Write", "MultiEdit"] as const;
 /** Cap on ADRs injected per hook event, so context delivery stays bounded. */
 export const MAX_INJECTED_ADRS = 3;
 
+/**
+ * Cap on ADRs injected because a matched one cites them.
+ *
+ * A separate budget on purpose. `max_injected_adrs` selects among decisions the
+ * edit itself reaches; a cited decision was chosen by another ADR's author, and
+ * letting it compete would drop a rule matching the code being written in
+ * favour of one that does not.
+ */
+export const MAX_INJECTED_CITATIONS = 2;
+
 export const DEFAULT_CONFIG = `# ${PRODUCT_NAME} — configuration
 # Source of truth is this repo's git tree. Nothing here is a cache.
 version: 1
@@ -24,6 +34,9 @@ hook:
   tools: [${HOOK_TOOLS.join(", ")}]
   # Most-specific-first; anything beyond this cap is not injected.
   max_injected_adrs: ${MAX_INJECTED_ADRS}
+  # Decisions cited by a matched one. Separate budget, and followed one step
+  # only: a citation of a citation is two removes from the code on screen.
+  max_injected_citations: ${MAX_INJECTED_CITATIONS}
 `;
 
 export const CONFIG_PATH = CONFIG_FILE;

@@ -50,6 +50,8 @@ export interface AdrRecord {
   symbols: string[];
   endpoints: string[];
   appliesTo: string[];
+  /** References to other decisions, here or in an installed package's ledger. */
+  cites: string[];
   /**
    * Normalised to a map from repo to artifacts. A flat list in the file means
    * "this repo" — a single-repo ledger is the one-key case of the general
@@ -122,6 +124,7 @@ export function parseAdr(file: string, path: string, source: string): AdrRecord 
     symbols: asStringArray(raw.symbols),
     endpoints: asStringArray(raw.endpoints),
     appliesTo: asStringArray(raw["applies-to"]),
+    cites: asStringArray(raw.cites),
     enforcedBy: map,
     enforcedByWasMap: wasMap,
     supersedes: raw.supersedes === undefined || raw.supersedes === null ? null : String(raw.supersedes),

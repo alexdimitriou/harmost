@@ -117,6 +117,39 @@ enforced-by:
     - { type: test, file: src/auth/login.test.ts, name: rejects_deactivated }
 ```
 
+### Citing another decision — including one in another ledger
+
+```yaml
+cites:
+  - ADR-002                 # this ledger
+  - harmost/ADR-004         # an installed package's ledger
+  - "@acme/rules/ADR-011"   # a scoped package
+```
+
+A citation is checked, not decorative. If the reference does not parse, or names
+a package with no ledger installed here, or names an ADR that ledger does not
+hold, `check` fails. A reference that resolves to nothing is worse than an
+absent one, because it reads as authority.
+
+**Cited decisions are delivered too.** When the hook matches a decision, it also
+injects what that decision cites, so the rule behind the rule reaches the agent
+rather than living in whoever read the file. Two bounds, both structural:
+
+- **Depth 1.** A citation of a citation is not followed. The matched decision is
+  the rule; a cited one is why that rule has its shape; anything past that is two
+  removes from the code on screen, and following the graph is how the whole
+  ledger arrives.
+- **A separate budget.** `max_injected_citations` is not `max_injected_adrs`.
+  The first selects decisions the *edit* reached; the second selects what another
+  author pointed at. Sharing one budget would let a citation crowd out a rule
+  that matches the code being written.
+
+This is what makes an upstream rule more than a link. A tool's own governance
+decisions — how an ADR is amended, what an accepted one must carry — are rules
+*about* ledgers, so every ledger is their subject. Shipped inside the package
+they are read-only by construction, and pinned by the lockfile, so a rule added
+upstream arrives through a deliberate upgrade rather than on its own.
+
 ## `check --json`
 
 A stable contract, versioned by `version`. Additive changes only within a major.

@@ -6,6 +6,7 @@ import { ADR_FILE, endpointNeedles } from "./adr.js";
 import { loadLedger, STATUSES, THIS_REPO, isRuleArtifact, type AdrRecord, type Artifact } from "./ledger.js";
 import { containsTerm } from "./match.js";
 import { decisionSection } from "./hook.js";
+import { parseRef, resolveRef, upstreamLedgerDir } from "./refs.js";
 import { INVOCATION } from "./name.js";
 
 export type Verdict = "pass" | "fail" | "unverified";
@@ -185,6 +186,27 @@ function validate(record: AdrRecord, ledger: AdrRecord[], root: string, thisRepo
     const source = cache.get(record.path) ?? null;
     if (source !== null && decisionSection(source) === null) {
       failures.push("accepted but has no `## Decision` section — the hook would deliver a title and no rule");
+    }
+  }
+
+  // A citation that resolves to nothing is worse than an absent one: it reads
+  // as authority. This is what makes a cross-ledger reference more than prose —
+  // the rule it names either exists where it says, or the gate says so.
+  for (const raw of record.cites) {
+    const ref = parseRef(raw);
+    if (ref === null) {
+      failures.push(`cites \`${String(raw)}\` — not a reference (expected \`ADR-ID\` or \`package/ADR-ID\`)`);
+      continue;
+    }
+    if (ref.package !== null && upstreamLedgerDir(root, ref.package) === null) {
+      failures.push(
+        `cites \`${ref.raw}\` — no ledger from \`${ref.package}\` is installed here, so the rule it names cannot be read`,
+      );
+      continue;
+    }
+    if (resolveRef(ref, ledger, root) === null) {
+      const where = ref.package === null ? "this ledger" : `\`${ref.package}\``;
+      failures.push(`cites \`${ref.raw}\` — ${where} has no ${ref.id}`);
     }
   }
 

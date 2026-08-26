@@ -3,6 +3,7 @@ import { endpointNeedles } from "./adr.js";
 
 export { endpointNeedles };
 import { loadLedger, THIS_REPO, type AdrRecord, isRuleArtifact } from "./ledger.js";
+import { parseRef, refKey, resolveRef } from "./refs.js";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -58,6 +59,50 @@ const wholeWord = (term: string): RegExp =>
 export interface Match {
   record: AdrRecord;
   hits: number;
+  /** Set when this decision is here because a matched one cites it. */
+  citedBy?: string;
+  /** Package whose ledger holds it, when that is not this repository's. */
+  source?: string;
+}
+
+/**
+ * Decisions a matched one points at, one step only.
+ *
+ * Followed to depth 1 deliberately. The agent is editing code: a matched
+ * decision is the rule, a cited one is why that rule has the shape it does, and
+ * a citation of a citation is two removes from the text on screen. Following
+ * the graph is also how the whole ledger arrives — ten citations at depth three
+ * is a thousand decisions, and cycles are trivial to write. Depth 1 bounds the
+ * closure by construction rather than by asking anyone to cite sparingly.
+ *
+ * Unresolvable references are skipped in silence. `check` fails the build on
+ * the same reference, which is what makes the silence recoverable.
+ */
+export function citedMatches(
+  matches: Match[],
+  records: AdrRecord[],
+  root: string,
+  cap: number,
+): Match[] {
+  if (cap <= 0) return [];
+  const seen = new Set(matches.map((m) => refKey({ raw: m.record.id, package: null, id: m.record.id })));
+  const cited: Match[] = [];
+
+  for (const match of matches) {
+    for (const raw of match.record.cites) {
+      if (cited.length >= cap) return cited;
+      const ref = parseRef(raw);
+      if (ref === null) continue;
+      const key = refKey(ref);
+      if (seen.has(key)) continue;
+      const record = resolveRef(ref, records, root);
+      if (record === null) continue;
+      if (record.status === "superseded" || record.status === "rejected") continue;
+      seen.add(key);
+      cited.push({ record, hits: 0, citedBy: match.record.id, source: ref.package ?? undefined });
+    }
+  }
+  return cited;
 }
 
 /**
@@ -204,7 +249,7 @@ const artifactLine = (record: AdrRecord): string | null => {
   return parts.length > 0 ? parts.join(", ") : null;
 };
 
-export function renderContext(matches: Match[]): string {
+export function renderContext(matches: Match[], citations: Match[] = []): string {
   const ratified = matches.filter((m) => m.record.status === "accepted").length;
   const draft = matches.length - ratified;
 
@@ -225,10 +270,19 @@ export function renderContext(matches: Match[]): string {
   if (draft > 0) {
     authority.push(`${draft} still proposed — not yet ratified, and not yet enforced. Treat as a warning.`);
   }
+  if (citations.length > 0) {
+    // Named as cited rather than matched: nothing in the edit selected them,
+    // and an agent should know which rules its own code reached.
+    authority.push(
+      `${citations.length} more ${citations.length === 1 ? "is" : "are"} cited by ${citations.length === 1 ? "one of them" : "them"} — context for the above, not matched by this edit.`,
+    );
+  }
 
-  const bodies = matches.map(({ record }) => {
+  const renderRecord = ({ record, citedBy, source }: Match): string => {
     const label = record.status === "accepted" ? "RATIFIED" : String(record.status).toUpperCase();
-    const lines = [`--- ${record.id} [${label} · class ${record.enforcementClass}] (${record.file}) ---`];
+    const where = source === undefined ? record.file : `${source} · ${record.file}`;
+    const why = citedBy === undefined ? "" : ` cited by ${citedBy}`;
+    const lines = [`--- ${record.id} [${label} · class ${record.enforcementClass}]${why} (${where}) ---`];
     if (record.title) lines.push(record.title);
     if (record.invariant) lines.push("", "INVARIANT", record.invariant);
 
@@ -246,8 +300,9 @@ export function renderContext(matches: Match[]): string {
     if (artifacts) lines.push("", `ENFORCED BY  ${artifacts}`);
     lines.push(`FULL TEXT    ${record.file}`);
     return lines.join("\n");
-  });
+  };
 
+  const bodies = [...matches.map(renderRecord), ...citations.map(renderRecord)];
   return [header, ...authority, "", ...bodies].join("\n");
 }
 
@@ -275,11 +330,12 @@ export function hookResponse(event: HookEvent, cwd: string): string | null {
 
   const matches = matchAdrs(text, records, config.hook.maxInjectedAdrs);
   if (matches.length === 0) return null;
+  const citations = citedMatches(matches, records, cwd, config.hook.maxInjectedCitations);
 
   return JSON.stringify({
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
-      additionalContext: renderContext(matches),
+      additionalContext: renderContext(matches, citations),
     },
   });
 }
