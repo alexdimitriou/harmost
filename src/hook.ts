@@ -2,7 +2,7 @@ import { readConfig } from "./config-read.js";
 import { endpointNeedles } from "./adr.js";
 
 export { endpointNeedles };
-import { loadLedger, THIS_REPO, type AdrRecord } from "./ledger.js";
+import { loadLedger, THIS_REPO, type AdrRecord, isRuleArtifact } from "./ledger.js";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -190,6 +190,13 @@ const artifactLine = (record: AdrRecord): string | null => {
   const parts: string[] = [];
   for (const [repo, artifacts] of Object.entries(record.enforcedBy)) {
     for (const artifact of artifacts) {
+      // A rule is worth more to the agent than a filename: it states what will
+      // fail and where, which is exactly what it needs before writing the line
+      // that would break it.
+      if (isRuleArtifact(artifact)) {
+        parts.push(`${artifact.rule}: \`${artifact.symbol}\` only from ${(artifact["only-from"] ?? []).join(", ")}`);
+        continue;
+      }
       const where = repo === THIS_REPO ? artifact.file : `${repo}:${artifact.file}`;
       parts.push(artifact.name ? `${where} (${artifact.name})` : where);
     }

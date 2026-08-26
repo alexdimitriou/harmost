@@ -1,4 +1,4 @@
-import { PRODUCT_NAME } from "./name.js";
+import { INVOCATION, PRODUCT_NAME } from "./name.js";
 import type { CheckReport, AdrResult } from "./check.js";
 
 /**
@@ -81,9 +81,14 @@ export function asTable(report: CheckReport): string {
       `${unenforced.length} of those declare class 1-3 but nothing enforces them:`,
       ...unenforced.map((r) => `  ${r.id} — artifacts resolve, but none of them run`),
       "",
-      "An artifact that merely exists holds no invariant. Give it a `run:`",
-      "command or a built-in rule, or record the ADR at class 4 with a",
-      "written justification — but it counts as exposure either way.",
+      "An artifact that merely exists holds no invariant — and `check` cannot",
+      "run one: it is contracted to execute and evaluate nothing, so no entry",
+      "resolves to `enforced` here and the count above is a fact about this",
+      "command rather than about your ledger.",
+      "",
+      `Run \`${INVOCATION} verify\` for the verdict. To close the gap, give the`,
+      "ADR a built-in rule, or record it at class 4 with a written",
+      "justification — but it counts as exposure either way.",
     );
   }
   if (unverified > 0) {

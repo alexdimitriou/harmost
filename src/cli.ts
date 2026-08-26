@@ -7,6 +7,7 @@ import { PRODUCT_NAME, INVOCATION } from "./name.js";
 import { init, report } from "./init.js";
 import { newAdr, reportNew } from "./new.js";
 import { check } from "./check.js";
+import { verify, asVerifyJson, asVerifyTable } from "./verify.js";
 import { asJson, asTable } from "./report-check.js";
 import { hookResponse, type HookEvent } from "./hook.js";
 
@@ -85,6 +86,21 @@ program
       process.stdout.write((options.json ? asJson(report) : asTable(report)) + "\n");
       process.exitCode = report.ok ? 0 : 1;
     } catch (error) {
+      fail((error as Error).message);
+    }
+  });
+
+program
+  .command("verify")
+  .description("execute enforcement: a rule is enforced only when it has been evaluated green")
+  .option("--json", "machine-readable output")
+  .action((options: { json?: boolean }) => {
+    try {
+      const report = verify(process.cwd());
+      process.stdout.write((options.json ? asVerifyJson(report) : asVerifyTable(report)) + "\n");
+      process.exitCode = report.ok ? 0 : 1;
+    } catch (error) {
+      // Exit 2: a config the gate cannot read is not a green ledger.
       fail((error as Error).message);
     }
   });
