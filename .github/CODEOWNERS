@@ -1,0 +1,13 @@
+# Who ratifies.
+#
+# These paths decide what is held and how strongly. A pull request that weakens
+# a decision — moving it back to `proposed`, dropping its class, rewording what
+# was ratified — changes one of them, and harmost reports it. Ownership is
+# what makes someone other than the author have to agree.
+#
+# REPLACE @alexdimitriou with the architect or team who ratifies. Until you do, these
+# lines match nobody and nothing is required to merge.
+
+adr/           @alexdimitriou
+harmost.lock      @alexdimitriou
+harmost.yaml      @alexdimitriou
