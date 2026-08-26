@@ -10,11 +10,36 @@ export type EnforcementClass = 1 | 2 | 3 | 4;
 /** The repo the gate is running in, when the ledger doesn't name repos explicitly. */
 export const THIS_REPO = ".";
 
-export interface Artifact {
+/** An artifact naming a file in the tree — a test, or a static-analysis config. */
+export interface RunnableArtifact {
   type: "test" | "lint";
   file: string;
   name?: string;
 }
+
+/**
+ * A built-in rule: data in the ledger, evaluated by this tool's own code.
+ *
+ * Deliberately not a command. A `run:` line would make every ADR a
+ * code-execution surface on CI, and ADRs are files a pull request adds — the
+ * same reasoning that forbids an agent ratifying its own decision forbids one
+ * shipping an executable in a document.
+ */
+export interface ChokePointArtifact {
+  rule: "choke-point";
+  /** The term that may appear only in `only-from`. */
+  symbol: string;
+  /** Where the rule looks. Required: a rule with no scope reads the whole tree. */
+  in: string[];
+  /** The files permitted to reference the symbol. */
+  "only-from": string[];
+}
+
+export type Artifact = RunnableArtifact | ChokePointArtifact;
+
+/** Narrow to a built-in rule. Malformed entries answer false rather than throw. */
+export const isRuleArtifact = (artifact: Artifact): artifact is ChokePointArtifact =>
+  typeof (artifact as ChokePointArtifact | undefined)?.rule === "string";
 
 export interface AdrRecord {
   id: string;

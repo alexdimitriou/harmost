@@ -1,0 +1,25 @@
+name: harmost
+
+on:
+  pull_request:
+
+jobs:
+  check:
+    name: invariant coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      # Self-host only. `init` generates `npx harmost check`, which is correct
+      # for every repo that CONSUMES harmost: they gate against a released
+      # version on purpose. This repo IS harmost, so npx would gate each pull
+      # request with the previous release and report green on code nobody ran —
+      # the gate and its subject would drift apart silently, which is the exact
+      # failure mode the ledger exists to prevent one level down.
+      - run: npm ci
+      - run: npm run build
+      - name: harmost check (built from this pull request)
+        run: node dist/cli.js check

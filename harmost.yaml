@@ -1,0 +1,18 @@
+# harmost — configuration
+# Source of truth is this repo's git tree. Nothing here is a cache.
+version: 1
+
+# Where the ADR ledger lives.
+adr_dir: adr
+
+# Where enforced-by test artifacts are allowed to live.
+test_globs:
+  - "tests/**"
+  - "**/*.test.*"
+  - "**/*.spec.*"
+
+hook:
+  # Agent tools whose edited text is matched against ADR symbols.
+  tools: [Edit, Write, MultiEdit]
+  # Most-specific-first; anything beyond this cap is not injected.
+  max_injected_adrs: 3

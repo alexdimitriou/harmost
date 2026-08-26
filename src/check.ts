@@ -3,7 +3,9 @@ import { matchesGlob, relative, isAbsolute } from "node:path";
 import { join } from "node:path";
 import { readConfig } from "./config-read.js";
 import { ADR_FILE, endpointNeedles } from "./adr.js";
-import { loadLedger, STATUSES, THIS_REPO, type AdrRecord, type Artifact } from "./ledger.js";
+import { loadLedger, STATUSES, THIS_REPO, isRuleArtifact, type AdrRecord, type Artifact } from "./ledger.js";
+import { containsTerm } from "./match.js";
+import { INVOCATION } from "./name.js";
 
 export type Verdict = "pass" | "fail" | "unverified";
 
@@ -36,10 +38,7 @@ export interface CheckReport {
 }
 
 /** Whole-word match, so `test_login` does not satisfy a claim about `login`. */
-function namedInFile(source: string, name: string): boolean {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(?<![\\w$])${escaped}(?![\\w$])`).test(source);
-}
+const namedInFile = (source: string, name: string): boolean => containsTerm(source, name);
 
 /** A placeholder left by `new` is not a symbol. Without this, an untouched
  *  scaffold satisfies the "the hook could never surface this" rule while the
@@ -71,6 +70,16 @@ function resolveArtifact(
   testGlobs: string[],
   cache: Map<string, string | null>,
 ): ArtifactResult {
+  // A built-in rule names no file and is not this gate's business: `check` is
+  // contracted to execute and evaluate nothing (spec §6). Reporting it as an
+  // unknown type would fail every ledger that adopts rules, so it is declared
+  // here and resolved by `verify`.
+  if (isRuleArtifact(artifact)) {
+    return {
+      state: "declared",
+      detail: `\`${artifact.rule}\` rule — \`check\` evaluates nothing; run \`${INVOCATION} verify\``,
+    };
+  }
   if (!artifact || typeof artifact.file !== "string" || artifact.file.length === 0) {
     return { state: "failed", detail: "enforced-by entry has no `file`" };
   }
