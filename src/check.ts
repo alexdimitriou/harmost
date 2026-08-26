@@ -5,6 +5,7 @@ import { readConfig } from "./config-read.js";
 import { ADR_FILE, endpointNeedles } from "./adr.js";
 import { loadLedger, STATUSES, THIS_REPO, isRuleArtifact, type AdrRecord, type Artifact } from "./ledger.js";
 import { containsTerm } from "./match.js";
+import { decisionSection } from "./hook.js";
 import { INVOCATION } from "./name.js";
 
 export type Verdict = "pass" | "fail" | "unverified";
@@ -168,6 +169,25 @@ function validate(record: AdrRecord, ledger: AdrRecord[], root: string, thisRepo
   // "non-empty". An empty string, a placeholder, or a route that is nothing but
   // mount segments ("/api/v1") all pass a length check while the hook can never
   // surface them — an ADR nobody is ever shown, behind a green gate.
+  // The same rule one level in: matchers decide whether the hook reaches an
+  // edit, and `## Decision` is what it delivers when it does. An accepted ADR
+  // without that section is matched, injected, and says nothing — the agent is
+  // handed a title where a rule should be, and nobody is told. Proposed ADRs
+  // are exempt: a decision still being drafted has not claimed anything yet.
+  if (record.status === "accepted") {
+    if (!cache.has(record.path)) {
+      try {
+        cache.set(record.path, readFileSync(record.path, "utf8"));
+      } catch {
+        cache.set(record.path, null);
+      }
+    }
+    const source = cache.get(record.path) ?? null;
+    if (source !== null && decisionSection(source) === null) {
+      failures.push("accepted but has no `## Decision` section — the hook would deliver a title and no rule");
+    }
+  }
+
   const realSymbols = record.symbols.filter((sym) => sym.trim().length > 0 && !isPlaceholder(sym));
   const realEndpoints = record.endpoints.filter(
     (e) => !isPlaceholder(e) && endpointNeedles(e).length > 0,

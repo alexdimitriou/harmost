@@ -224,3 +224,38 @@ test("Q5 — a map that declares nothing for this repo fails", () => {
   );
   assert.match(check(cwd).results[0]!.failures.join(" "), /declares no enforcement for this repo/);
 });
+
+/** Cut a section out of an ADR body, heading and all. */
+function dropSection(path: string, heading: string, next: string): void {
+  const source = readFileSync(path, "utf8");
+  const from = source.indexOf(heading);
+  const to = source.indexOf(next);
+  writeFileSync(path, source.slice(0, from) + source.slice(to), "utf8");
+}
+
+test("an accepted ADR with no `## Decision` fails — the hook would deliver a title", () => {
+  // The deliverability rule one level in. Matchers decide whether the hook
+  // reaches an edit; the Decision is what it delivers when it does. An ADR that
+  // is matched, injected and says nothing is the same silent hole as one that
+  // is never matched at all.
+  const cwd = repo();
+  const { path } = test2(cwd);
+  edit(path, { status: "accepted" });
+  dropSection(path, "## Decision", "## Enforcement");
+
+  const report = check(cwd);
+  assert.equal(report.ok, false);
+  assert.ok(
+    report.results[0]?.failures.some((f) => f.includes("`## Decision`")),
+    `expected a Decision failure, got ${JSON.stringify(report.results[0]?.failures)}`,
+  );
+});
+
+test("a proposed ADR needs no Decision yet — it has not claimed anything", () => {
+  const cwd = repo();
+  const { path } = test2(cwd);
+  dropSection(path, "## Decision", "## Enforcement");
+
+  const report = check(cwd);
+  assert.equal(report.ok, true);
+});
