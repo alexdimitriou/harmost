@@ -45,6 +45,41 @@ An ADR is `accepted` only when its enforcement artifact exists and is named in i
 
 Most tools block when they find a violation. `harmost` also blocks when a rule a change touches **has no enforcement behind it at all**. That is the inversion: coverage, not luck.
 
+## The agent is told, and cannot finish red
+
+`init --claude` registers three hooks, not one.
+
+| Event | Command | What it does |
+|---|---|---|
+| `PreToolUse` | `harmost hook` | injects the decisions an edit reaches, as it is made |
+| `SessionStart` | `harmost brief` | states what the ledger demands, before anything is edited |
+| `Stop` | `harmost gate` | refuses to let a turn finish while the gate is red |
+
+The edit hook is reactive: it fires when an edit matches a decision's symbols, so
+an agent that has not touched the covered code does not know the decision exists.
+And nothing stopped an agent reporting itself finished with a ratified decision
+unheld. Between those two the human was the transport layer — reading the gate
+and restating it in a prompt, which is the instruction-file failure this tool
+exists to replace.
+
+`harmost gate` is not a new authority. It is the same verdict the merge gate
+gives, delivered when the agent believes it is finished rather than after a human
+has read its summary. It honours the host's `stop_hook_active`, so it forces one
+continuation rather than trapping a session, and it stays silent in a repository
+that has no ledger.
+
+Both refuse to weaken anything on the way past:
+
+> Making the gate green means doing what these decisions require, and recording
+> the artifact that holds each one in its `enforced-by`. It does not mean
+> lowering an enforcement class, moving a decision back to `proposed`, rewording
+> what was ratified, or deleting it. If you believe a decision is wrong, say so
+> and leave the gate red.
+
+**This is the adapter layer, and it is Claude Code-specific.** A repository whose
+agent is something else gets none of it, which is why the CI gate stays the
+floor: it does not care what wrote the code.
+
 ## Ratification — who may weaken a rule
 
 A gate cannot defend itself. The ledger and this tool's config are files in the

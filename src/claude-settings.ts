@@ -2,6 +2,12 @@ import { HOOK_TOOLS } from "./config.js";
 import { INVOCATION } from "./name.js";
 
 export const HOOK_COMMAND = `${INVOCATION} hook`;
+export const BRIEF_COMMAND = `${INVOCATION} brief`;
+export const GATE_COMMAND = `${INVOCATION} gate`;
+
+/** Seconds. Both read the ledger and evaluate rules, so they need more than the
+ *  edit hook, and neither sits inside the keystroke loop. */
+export const SESSION_TIMEOUT_SECONDS = 20;
 
 /**
  * Seconds. The host kills the hook at this point and proceeds with the tool
@@ -72,6 +78,8 @@ export function mergeHookRegistration(
     return { status: "refused", reason: "`hooks.PreToolUse` is not an array" };
   }
   const preToolUse = [...((preValue ?? []) as unknown[])];
+  let editHookPresent = false;
+  let added = false;
 
   for (const group of preToolUse) {
     if (!isGroup(group)) {
@@ -80,23 +88,63 @@ export function mergeHookRegistration(
     if (group.hooks !== undefined && !Array.isArray(group.hooks)) {
       return { status: "refused", reason: "a `hooks` list inside `hooks.PreToolUse` is not an array" };
     }
-    const already = (group.hooks ?? []).some(
-      (h) => isGroup(h) && (h as HookEntry).command === HOOK_COMMAND,
-    );
-    if (already) return { status: "unchanged" };
+    if ((group.hooks ?? []).some((h) => isGroup(h) && (h as HookEntry).command === HOOK_COMMAND)) {
+      editHookPresent = true;
+    }
   }
 
-  const entry: HookEntry = { type: "command", command: HOOK_COMMAND, timeout: HOOK_TIMEOUT_SECONDS };
-  const matcher = matcherFor(tools);
-  const index = preToolUse.findIndex((g) => isGroup(g) && g.matcher === matcher);
+  // Not an early return. A repository initialised by an earlier version already
+  // has the edit hook, and returning here would leave the session events
+  // unregistered for exactly the repositories that have been using this longest.
+  if (!editHookPresent) {
+    const entry: HookEntry = { type: "command", command: HOOK_COMMAND, timeout: HOOK_TIMEOUT_SECONDS };
+    const matcher = matcherFor(tools);
+    const index = preToolUse.findIndex((g) => isGroup(g) && g.matcher === matcher);
 
-  if (index >= 0) {
-    const group = preToolUse[index] as MatcherGroup;
-    preToolUse[index] = { ...group, hooks: [...((group.hooks ?? []) as HookEntry[]), entry] };
-  } else {
-    preToolUse.push({ matcher, hooks: [entry] });
+    if (index >= 0) {
+      const group = preToolUse[index] as MatcherGroup;
+      preToolUse[index] = { ...group, hooks: [...((group.hooks ?? []) as HookEntry[]), entry] };
+    } else {
+      preToolUse.push({ matcher, hooks: [entry] });
+    }
+    hooks.PreToolUse = preToolUse;
+    added = true;
   }
 
-  hooks.PreToolUse = preToolUse;
+  // SessionStart and Stop take no matcher — verified against a live config, not
+  // inferred. A registration in a shape the host does not read fires never, and
+  // a delivery mechanism that silently does nothing is the failure this whole
+  // tool is about.
+  for (const [event, command] of [
+    ["SessionStart", BRIEF_COMMAND],
+    ["Stop", GATE_COMMAND],
+  ] as const) {
+    const value = hooks[event];
+    if (value !== undefined && !Array.isArray(value)) {
+      return { status: "refused", reason: `\`hooks.${event}\` is not an array` };
+    }
+    const groups = [...((value ?? []) as unknown[])];
+    let present = false;
+    for (const group of groups) {
+      if (!isGroup(group)) {
+        return { status: "refused", reason: `an entry in \`hooks.${event}\` is not an object` };
+      }
+      if (group.hooks !== undefined && !Array.isArray(group.hooks)) {
+        return { status: "refused", reason: `a \`hooks\` list inside \`hooks.${event}\` is not an array` };
+      }
+      if ((group.hooks ?? []).some((h) => isGroup(h) && (h as HookEntry).command === command)) {
+        present = true;
+      }
+    }
+    if (!present) {
+      groups.push({
+        hooks: [{ type: "command", command, timeout: SESSION_TIMEOUT_SECONDS }],
+      });
+      hooks[event] = groups;
+      added = true;
+    }
+  }
+
+  if (!added) return { status: "unchanged" };
   return { status: "merged", settings: { ...existing, hooks } };
 }

@@ -65,11 +65,38 @@ test("joins an existing group with our matcher rather than duplicating it", () =
   assert.deepEqual(commandsIn(settings), ["other", HOOK_COMMAND]);
 });
 
-test("detects prior registration under a different matcher and does nothing", () => {
+test("detects prior registration under a different matcher and does not duplicate it", () => {
+  // A second edit-hook entry fires the hook twice per edit. The session events
+  // are still added: a repository initialised by an earlier version is exactly
+  // the one that would otherwise never get them.
   const outcome = mergeHookRegistration({
     hooks: { PreToolUse: [{ matcher: "Write", hooks: [{ type: "command", command: HOOK_COMMAND }] }] },
   });
-  assert.equal(outcome.status, "unchanged");
+  assert.equal(outcome.status, "merged");
+
+  const settings = (outcome as { settings: ClaudeSettings }).settings;
+  const pre = (settings.hooks as Record<string, unknown>).PreToolUse as { hooks?: unknown[] }[];
+  const edits = pre.flatMap((g) => g.hooks ?? []).filter(
+    (h) => (h as { command?: string }).command === HOOK_COMMAND,
+  );
+  assert.equal(edits.length, 1, "the edit hook must appear exactly once");
+});
+
+test("registers the session events, and running twice adds nothing", () => {
+  const first = mergeHookRegistration({});
+  assert.equal(first.status, "merged");
+  const settings = (first as { settings: ClaudeSettings }).settings;
+  const hooks = settings.hooks as Record<string, unknown>;
+
+  for (const event of ["SessionStart", "Stop"]) {
+    const groups = hooks[event] as { matcher?: string; hooks?: unknown[] }[];
+    assert.ok(Array.isArray(groups) && groups.length === 1, `${event} must be registered`);
+    // Neither event takes a matcher. A registration in a shape the host does
+    // not read fires never, which is the failure this tool exists to prevent.
+    assert.equal(groups[0]?.matcher, undefined, `${event} must carry no matcher`);
+  }
+
+  assert.equal(mergeHookRegistration(settings).status, "unchanged");
 });
 
 test("REFUSES to rewrite shapes it does not understand, rather than mangling them", () => {

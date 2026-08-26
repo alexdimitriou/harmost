@@ -9,6 +9,7 @@ import { newAdr, reportNew } from "./new.js";
 import { check } from "./check.js";
 import { verify, asVerifyJson, asVerifyTable } from "./verify.js";
 import { writeLock, LOCK_FILE } from "./lock.js";
+import { briefText, gateFailure } from "./brief.js";
 import { loadLedger } from "./ledger.js";
 import { readConfig } from "./config-read.js";
 import { asJson, asTable } from "./report-check.js";
@@ -130,6 +131,59 @@ program
     } catch (error) {
       // Exit 2: a config the gate cannot read is not a green ledger.
       fail((error as Error).message);
+    }
+  });
+
+program
+  .command("brief")
+  .description("what the ledger demands — for the agent host's session start, not for you")
+  .action(() => {
+    // Never break a session. Silence is the failure mode here, and it is safe
+    // only because the gate says the same thing where it cannot be missed.
+    try {
+      const text = briefText(process.cwd());
+      if (text === null) return;
+      process.stdout.write(
+        JSON.stringify({
+          hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: text },
+        }) + "\n",
+      );
+    } catch {
+      // Intentionally silent.
+    }
+  });
+
+program
+  .command("gate")
+  .description("refuse to finish while the gate is red — for the agent host's stop event")
+  .action(async () => {
+    try {
+      // The host sets this once it has already forced a continuation. Without
+      // honouring it a red gate would refuse every attempt to stop, forever.
+      let already = false;
+      if (!process.stdin.isTTY) {
+        const chunks: Buffer[] = [];
+        for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+        const raw = Buffer.concat(chunks).toString("utf8").trim();
+        if (raw.length > 0) {
+          try {
+            already = (JSON.parse(raw) as { stop_hook_active?: boolean }).stop_hook_active === true;
+          } catch {
+            already = false;
+          }
+        }
+      }
+      if (already) return;
+
+      const reason = gateFailure(process.cwd());
+      if (reason === null) return;
+      // Exit 2 with the reason on stderr is the host's documented way to stop a
+      // stop. A JSON decision field would work too and is one field name away
+      // from silently doing nothing.
+      process.stderr.write(reason + "\n");
+      process.exitCode = 2;
+    } catch {
+      // A gate that cannot run must not trap the session.
     }
   });
 

@@ -11,6 +11,28 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node dist/cli.js brief",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node dist/cli.js gate",
+            "timeout": 20
+          }
+        ]
+      }
     ]
   }
 }
