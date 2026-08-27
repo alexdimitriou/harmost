@@ -10,6 +10,7 @@ import { check } from "./check.js";
 import { verify, asVerifyJson, asVerifyTable } from "./verify.js";
 import { writeLock, LOCK_FILE } from "./lock.js";
 import { briefText, gateFailure } from "./brief.js";
+import { payloadCwd, sessionRoots } from "./session.js";
 import { loadLedger } from "./ledger.js";
 import { readConfig } from "./config-read.js";
 import { asJson, asTable } from "./report-check.js";
@@ -32,6 +33,20 @@ const pkg = JSON.parse(
 const fail = (message: string, code = 2): void => {
   process.stderr.write(`${PRODUCT_NAME}: ${message}\n`);
   process.exitCode = code;
+};
+
+/**
+ * The host's hook payload, or "" when there is none.
+ *
+ * A hook run from a terminal has no payload and must not sit waiting for one:
+ * `brief` and `gate` are on a 20s host timeout, and a hook that hangs is a hook
+ * that gets uninstalled.
+ */
+const stdin = async (): Promise<string> => {
+  if (process.stdin.isTTY) return "";
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
 };
 
 const program = new Command();
@@ -137,11 +152,16 @@ program
 program
   .command("brief")
   .description("what the ledger demands — for the agent host's session start, not for you")
-  .action(() => {
+  .action(async () => {
     // Never break a session. Silence is the failure mode here, and it is safe
     // only because the gate says the same thing where it cannot be missed.
     try {
-      const text = briefText(process.cwd());
+      // The host's payload carries the session's `cwd`, and it is authoritative:
+      // this process's own is whatever the host happened to spawn us in, and a
+      // hosted session rewrites `cwd` before handing it over. Reading it was the
+      // difference between describing the session's repository and describing
+      // some other one confidently.
+      const text = briefText(sessionRoots(payloadCwd(await stdin()) ?? process.cwd()));
       if (text === null) return;
       process.stdout.write(
         JSON.stringify({
@@ -160,22 +180,20 @@ program
     try {
       // The host sets this once it has already forced a continuation. Without
       // honouring it a red gate would refuse every attempt to stop, forever.
+      const raw = await stdin();
       let already = false;
-      if (!process.stdin.isTTY) {
-        const chunks: Buffer[] = [];
-        for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
-        const raw = Buffer.concat(chunks).toString("utf8").trim();
-        if (raw.length > 0) {
-          try {
-            already = (JSON.parse(raw) as { stop_hook_active?: boolean }).stop_hook_active === true;
-          } catch {
-            already = false;
-          }
+      if (raw.trim().length > 0) {
+        try {
+          already = (JSON.parse(raw) as { stop_hook_active?: boolean }).stop_hook_active === true;
+        } catch {
+          already = false;
         }
       }
       if (already) return;
 
-      const reason = gateFailure(process.cwd());
+      // Same payload, same `cwd`: the stream was already being parsed here for
+      // one field while `brief` ignored it entirely.
+      const reason = gateFailure(sessionRoots(payloadCwd(raw) ?? process.cwd()));
       if (reason === null) return;
       // Exit 2 with the reason on stderr is the host's documented way to stop a
       // stop. A JSON decision field would work too and is one field name away

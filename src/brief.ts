@@ -4,6 +4,7 @@ import { INVOCATION, PRODUCT_NAME } from "./name.js";
 import { LOCK_FILE } from "./lock.js";
 import { loadLedger, type AdrRecord } from "./ledger.js";
 import { readConfig } from "./config-read.js";
+import { subjectLabel, subjectName, type Subject } from "./session.js";
 import { join } from "node:path";
 
 /**
@@ -15,6 +16,10 @@ import { join } from "node:path";
  * while a ratified decision was unheld. Between those two, the human was the
  * transport layer — reading the gate and re-stating it in a prompt, which is
  * the instruction-file failure the ledger exists to replace.
+ *
+ * Both events fire once per session, and a session is not one repository.
+ * Every line below therefore names the repository it is about; see
+ * `session.ts` for why that matters more than finding all of them.
  */
 interface Outstanding {
   id: string;
@@ -27,6 +32,13 @@ interface State {
   verify: VerifyReport;
   records: AdrRecord[];
   outstanding: Outstanding[];
+  /** Where this repository keeps its ledger — its own config's, not ours. */
+  adrDir: string;
+}
+
+interface Ledger {
+  subject: Subject;
+  state: State;
 }
 
 function read(cwd: string): State | null {
@@ -65,7 +77,26 @@ function read(cwd: string): State | null {
     .map(([id, list]) => ({ id, title: titles.get(id) ?? "", reasons: [...new Set(list)] }))
     .sort((a, b) => a.id.localeCompare(b.id));
 
-  return { check: checked, verify: verified, records, outstanding };
+  return { check: checked, verify: verified, records, outstanding, adrDir: config.adrDir };
+}
+
+/** Every ledger among `roots` that has anything to say, in the order given. */
+function readAll(roots: readonly string[]): Ledger[] {
+  const ledgers: Ledger[] = [];
+  for (const root of roots) {
+    let state: State | null = null;
+    try {
+      state = read(root);
+    } catch {
+      // One unreadable repository must not silence the others. This runs at
+      // session start and at stop; throwing here would take the whole delivery
+      // with it, which is the failure mode this file exists to remove.
+      state = null;
+    }
+    if (state === null || state.records.length === 0) continue;
+    ledgers.push({ subject: { root, name: subjectName(root) }, state });
+  }
+  return ledgers;
 }
 
 const WEAKENING = [
@@ -77,32 +108,75 @@ const WEAKENING = [
   `the gate red; changing it is the architect's call, not this session's.`,
 ];
 
-/** Session-start context, or null when there is nothing worth the tokens. */
-export function briefText(cwd: string): string | null {
-  const state = read(cwd);
-  if (state === null) return null;
+const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many);
 
-  const accepted = state.records.filter((r) => r.status === "accepted").length;
-  if (state.records.length === 0) return null;
-
-  if (state.outstanding.length === 0) {
-    return [
-      `${PRODUCT_NAME}: ${accepted} ratified architectural decision${accepted === 1 ? "" : "s"} in this repository, all held.`,
-      `They are delivered to you as you edit the code they cover. \`${INVOCATION} check\` is green.`,
-    ].join("\n");
+/** `<repo> (/path) — 4 ratified architectural decisions, all held.` */
+function heldLine(ledger: Ledger): string {
+  const accepted = ledger.state.records.filter((r) => r.status === "accepted").length;
+  // "0 ratified decisions, all held" is a green sentence about a ledger that
+  // has ratified nothing. Say what is actually true of it.
+  if (accepted === 0) {
+    const total = ledger.state.records.length;
+    return `${subjectLabel(ledger.subject)} — ${total} ${plural(total, "decision", "decisions")}, none ratified yet.`;
   }
+  return `${subjectLabel(ledger.subject)} — ${accepted} ratified architectural ${plural(accepted, "decision", "decisions")}, all held.`;
+}
 
+/** The repository's name, its outstanding decisions, and where to read them. */
+function outstandingSection(ledger: Ledger): string[] {
+  const items = ledger.state.outstanding;
   const lines = [
-    `${PRODUCT_NAME}: this repository has ratified architectural decisions that its code does not meet.`,
-    "",
-    `${state.outstanding.length} decision${state.outstanding.length === 1 ? " is" : "s are"} outstanding:`,
+    `${subjectLabel(ledger.subject)} — ${items.length} ${plural(items.length, "decision", "decisions")} outstanding · ledger: ${ledger.state.adrDir}/`,
     "",
   ];
-  for (const item of state.outstanding) {
+  if (items.length === 0) {
+    lines.push(`  the gate is red — run \`${INVOCATION} check\` and \`${INVOCATION} verify\` there`, "");
+    return lines;
+  }
+  for (const item of items) {
     lines.push(`  ${item.id}  ${item.title}`);
     for (const reason of item.reasons) lines.push(`           ${reason}`);
   }
-  lines.push("", ...WEAKENING, "", `Full text: the \`adr/\` directory. The gate: \`${INVOCATION} check\` and \`${INVOCATION} verify\`.`);
+  lines.push("");
+  return lines;
+}
+
+/** Session-start context, or null when there is nothing worth the tokens. */
+export function briefText(roots: readonly string[]): string | null {
+  const ledgers = readAll(roots);
+  if (ledgers.length === 0) return null;
+
+  const red = ledgers.filter((l) => l.state.outstanding.length > 0);
+  const green = ledgers.filter((l) => l.state.outstanding.length === 0);
+
+  if (red.length === 0) {
+    const lines =
+      ledgers.length === 1
+        ? [`${PRODUCT_NAME}: ${heldLine(ledgers[0])}`]
+        : [`${PRODUCT_NAME}: ${ledgers.length} ledgers, all held.`, "", ...ledgers.map((l) => `  ${heldLine(l)}`), ""];
+    lines.push(
+      `They are delivered to you as you edit the code they cover. \`${INVOCATION} check\` is green in ${plural(ledgers.length, "that repository", "each")}.`,
+    );
+    return lines.join("\n");
+  }
+
+  const lines = [
+    red.length === 1
+      ? `${PRODUCT_NAME}: ${subjectLabel(red[0].subject)} has ratified architectural decisions that its code does not meet.`
+      : `${PRODUCT_NAME}: ${red.length} repositories have ratified architectural decisions that their code does not meet.`,
+    "",
+  ];
+  for (const ledger of red) lines.push(...outstandingSection(ledger));
+  // Naming the green ones is not padding: it is the difference between "the
+  // session is green" and "these repositories are green", and only the second
+  // is a claim we can stand behind.
+  for (const ledger of green) lines.push(heldLine(ledger));
+  if (green.length > 0) lines.push("");
+  lines.push(
+    ...WEAKENING,
+    "",
+    `Full text: the ledger directory named beside each repository above. The gate: \`${INVOCATION} check\` and \`${INVOCATION} verify\`, run there.`,
+  );
   return lines.join("\n");
 }
 
@@ -113,19 +187,17 @@ export function briefText(cwd: string): string | null {
  * believes it is finished rather than after a human has read its summary. It is
  * not a new authority — it is the existing gate, fired sooner.
  */
-export function gateFailure(cwd: string): string | null {
-  const state = read(cwd);
-  if (state === null) return null;
-  if (state.check.ok && state.verify.ok) return null;
+export function gateFailure(roots: readonly string[]): string | null {
+  const red = readAll(roots).filter((l) => !(l.state.check.ok && l.state.verify.ok));
+  if (red.length === 0) return null;
 
   const lines = [
-    `${PRODUCT_NAME}: the gate is red, so this work is not finished.`,
+    red.length === 1
+      ? `${PRODUCT_NAME}: the gate is red in ${subjectLabel(red[0].subject)}, so this work is not finished.`
+      : `${PRODUCT_NAME}: the gate is red in ${red.length} repositories, so this work is not finished.`,
     "",
   ];
-  for (const item of state.outstanding) {
-    lines.push(`  ${item.id}  ${item.title}`);
-    for (const reason of item.reasons) lines.push(`           ${reason}`);
-  }
-  lines.push("", ...WEAKENING);
+  for (const ledger of red) lines.push(...outstandingSection(ledger));
+  lines.push(...WEAKENING);
   return lines.join("\n");
 }

@@ -68,6 +68,17 @@ has read its summary. It honours the host's `stop_hook_active`, so it forces one
 continuation rather than trapping a session, and it stays silent in a repository
 that has no ledger.
 
+A session is not one repository, and both events fire once for the whole of it.
+The host's payload carries a single `cwd` and no list of working directories, so
+every verdict names the repository it is about — `brief` and `gate` never say
+"this repository", because a green verdict whose subject the reader cannot
+resolve is read as the session's. Past `cwd` they also read any ledger a
+repository declares in `.claude/settings.json` under
+`permissions.additionalDirectories`. That discovery is knowingly incomplete: a
+directory added at launch (`--add-dir`, the SDK, an editor's multi-root
+workspace) leaves nothing on disk to find. Naming the subject is the half that
+does not depend on the host giving us anything.
+
 Both refuse to weaken anything on the way past:
 
 > Making the gate green means doing what these decisions require, and recording
